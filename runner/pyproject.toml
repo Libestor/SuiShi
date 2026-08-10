@@ -1,0 +1,18 @@
+[project]
+name = "investment-overview-runner"
+version = "0.1.0"
+description = "Isolated Python data-source runner"
+license = "AGPL-3.0-only"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "pydantic-settings>=2.8,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

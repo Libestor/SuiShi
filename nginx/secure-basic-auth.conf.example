@@ -1,0 +1,6 @@
+# nginx/default.conf 已启用以下配置：
+# auth_basic "Investment Overview";
+# auth_basic_user_file /etc/nginx/.htpasswd;
+#
+# Compose 默认挂载 .htpasswd.dev。生产部署时生成独立文件，并通过
+# BASIC_AUTH_FILE=/absolute/path/to/secure.htpasswd 覆盖挂载来源。

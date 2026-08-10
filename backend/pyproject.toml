@@ -1,0 +1,37 @@
+[project]
+name = "investment-overview-backend"
+version = "0.1.0"
+description = "FastAPI backend for the investment overview dashboard"
+license = "AGPL-3.0-only"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14,<2",
+  "apscheduler>=3.11,<4",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "pydantic-settings>=2.8,<3",
+  "pymysql>=1.1,<2",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<10",
+  "pytest-cov>=6,<8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
