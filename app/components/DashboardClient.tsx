@@ -441,7 +441,7 @@ export function DashboardClient() {
           </button>
         )}
         <main>
-          {view === "overview" && <Overview data={data} />}
+          {view === "overview" && <Overview data={data} onChanged={refresh} />}
           {view === "assets" && <AssetsView data={data} onChanged={refresh} />}
           {view === "automation" && <AutomationView assets={data.assets} />}
           {view === "achievements" && <AchievementsView data={data} />}
@@ -516,7 +516,7 @@ function Topbar({ connection, onSnapshot, onLogout }: { connection: string; onSn
   );
 }
 
-function Overview({ data }: { data: Dashboard }) {
+function Overview({ data, onChanged }: { data: Dashboard; onChanged: () => Promise<void> }) {
   const goal = data.goals.find((item) => !item.achievedAt) ?? data.goals[0];
   const staleAssets = data.assets.filter((asset) => asset.ageHours >= 24);
   return (
@@ -536,7 +536,7 @@ function Overview({ data }: { data: Dashboard }) {
 
       <section className="panel hierarchy-panel">
         <PanelHeading title="资产结构树" subtitle="总资产 → 三个篮子 → 具体产品" action={`${data.assets.length} 项产品 · 点击篮子收起`} />
-        <AssetTree total={data.totalAssetCny} baskets={data.baskets} assets={data.assets} />
+        <AssetTree total={data.totalAssetCny} baskets={data.baskets} assets={data.assets} onChanged={onChanged} />
       </section>
 
       <section className="overview-grid lower">
@@ -592,10 +592,11 @@ function GoalProgress({ goal }: { goal: Goal }) {
   );
 }
 
-function AssetTree({ total, baskets, assets }: { total: number; baskets: Basket[]; assets: Asset[] }) {
+function AssetTree({ total, baskets, assets, onChanged }: { total: number; baskets: Basket[]; assets: Asset[]; onChanged: () => Promise<void> }) {
   const [expanded, setExpanded] = useState<Set<Basket["code"]>>(
     () => new Set(["emergency", "growth", "risk"]),
   );
+  const [cashBasket, setCashBasket] = useState<Basket | null>(null);
   const toggle = (code: Basket["code"]) => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -639,9 +640,15 @@ function AssetTree({ total, baskets, assets }: { total: number; baskets: Basket[
               </button>
               {isExpanded && (
                 <div className="product-branches">
-                  {entries.map((entry) => (
+                  {entries.map((entry) => entry.kind === "cash" ? (
+                    <button className="product-node cash cash-edit-trigger" type="button" key={entry.id} onClick={() => setCashBasket(basket)}>
+                      <span className="product-mark">现</span>
+                      <span className="product-copy"><strong>{entry.name}</strong><small>点击记录存入或支出</small></span>
+                      <span className="product-value"><strong>{money(entry.value, true)}</strong><small>{percent(basket.valueCny ? entry.value / basket.valueCny * 100 : 0)} 篮内</small></span>
+                    </button>
+                  ) : (
                     <div className={`product-node ${entry.kind}`} key={entry.id}>
-                      <span className="product-mark">{entry.kind === "cash" ? "现" : entry.name.slice(0, 1)}</span>
+                      <span className="product-mark">{entry.name.slice(0, 1)}</span>
                       <span className="product-copy"><strong>{entry.name}</strong><small>{entry.meta}</small></span>
                       <span className="product-value"><strong>{money(entry.value, true)}</strong><small>{percent(basket.valueCny ? entry.value / basket.valueCny * 100 : 0)} 篮内</small></span>
                     </div>
@@ -652,6 +659,51 @@ function AssetTree({ total, baskets, assets }: { total: number; baskets: Basket[
           );
         })}
       </div>
+      {cashBasket && <CashBalanceDialog basket={cashBasket} onClose={() => setCashBasket(null)} onSaved={onChanged} />}
+    </div>
+  );
+}
+
+function CashBalanceDialog({ basket, onClose, onSaved }: { basket: Basket; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [direction, setDirection] = useState<"increase" | "decrease">("increase");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [message, setMessage] = useState("");
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0) { setMessage("请输入大于 0 的金额。"); return; }
+    if (direction === "decrease" && value > basket.cashBalanceCny) { setMessage("支出金额不能超过当前待购买现金。"); return; }
+    try {
+      await api("/ledger", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: direction === "increase" ? "external_deposit" : "external_withdrawal",
+          basket_id: basket.id,
+          amount: String(value),
+          currency: "CNY",
+          note: note.trim() || (direction === "increase" ? "补充待购买现金" : "从待购买现金支出"),
+        }),
+      });
+      await onSaved();
+      onClose();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "现金变动记录失败"); }
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="cash-balance-title">
+      <button className="modal-dismiss" type="button" aria-label="关闭待购买现金编辑窗口" onClick={onClose} />
+      <form className="modal-card cash-balance-modal" onSubmit={submit}>
+        <div className="modal-heading"><div><p className="section-kicker">{basket.name}</p><h2 id="cash-balance-title">待购买现金</h2></div><span>每次修改都会保留一笔资金流水</span></div>
+        <p className="cash-balance-current">当前可用 <strong>{money(basket.cashBalanceCny, true)}</strong></p>
+        <div className="cash-direction" aria-label="现金变动方式">
+          <button type="button" className={direction === "increase" ? "active" : ""} onClick={() => setDirection("increase")}><strong>存入现金</strong><span>增加本金与本篮子现金</span></button>
+          <button type="button" className={direction === "decrease" ? "active" : ""} onClick={() => setDirection("decrease")}><strong>支出现金</strong><span>减少本金与本篮子现金</span></button>
+        </div>
+        <label>本次{direction === "increase" ? "存入" : "支出"}金额（元）<input type="number" min="0.01" max={direction === "decrease" ? basket.cashBalanceCny : undefined} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="例如：5000" /></label>
+        <label>备注（可选）<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={direction === "increase" ? "例如：本月待投资资金" : "例如：购买资产前转出"} /></label>
+        {message && <p className="cash-balance-message">{message}</p>}
+        <div className="form-actions"><button type="button" onClick={onClose}>取消</button><button className="primary-button" type="submit">确认记录</button></div>
+      </form>
     </div>
   );
 }
