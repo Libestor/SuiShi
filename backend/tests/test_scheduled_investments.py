@@ -146,3 +146,30 @@ def test_scheduled_investment_api_requires_schedule_fields(client, db, auth_head
         },
     )
     assert response.status_code == 422
+
+
+def test_scheduled_investment_api_accepts_valid_time_and_mapped_quote_source(
+    client, db, auth_headers
+) -> None:
+    asset = db.scalar(select(Asset).where(Asset.name == "成长资产"))
+    source = DataSource(
+        name="报价脚本", code="def fetch(payload): return {'items': []}",
+        input_mapping={"code": "symbol"}, output_mapping={"unit_price": "price"},
+        asset_ids=[asset.id], packages=[],
+    )
+    db.add(source)
+    db.commit()
+
+    response = client.post(
+        "/api/v1/scheduled-investments",
+        headers=auth_headers,
+        json={
+            "name": "每周定投", "asset_id": asset.id, "data_source_id": source.id,
+            "amount_cny": "100", "frequency": "weekly", "weekday": 0,
+            "time_of_day": "09:30",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["dataSourceId"] == source.id
+    assert response.json()["timeOfDay"] == "09:30"

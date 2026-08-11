@@ -363,6 +363,40 @@ def sell_asset_to_pending_cash(
     }
 
 
+@router.post("/assets/{asset_id}/sync")
+def sync_one_asset(asset_id: str, db: Session = Depends(get_db)) -> dict[str, object]:
+    """Run the single data source bound to one asset, without refreshing others."""
+
+    asset = _get_active(db, Asset, asset_id)
+    sources = list(
+        db.scalars(select(DataSource).where(DataSource.deleted_at.is_(None)))
+    )
+    matches = [source for source in sources if asset.id in source.asset_ids]
+    if not matches:
+        raise HTTPException(
+            status_code=409,
+            detail="该资产尚未绑定报价数据源，请先在“数据源与自动化”中绑定后再同步。",
+        )
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="该资产绑定了多个报价数据源，请在自动化页面保留一个后再同步。",
+        )
+    source = matches[0]
+    run = execute_data_source(db, source, asset_ids=[asset.id])
+    if run.status == "failed":
+        raise HTTPException(status_code=422, detail=run.error_message)
+    db.refresh(asset)
+    return {
+        "sourceId": source.id,
+        "sourceName": source.name,
+        "status": run.status,
+        "durationMs": run.duration_ms,
+        "unitPrice": float(asset.unit_price),
+        "priceUpdatedAt": asset.price_updated_at,
+    }
+
+
 @router.post("/assets/{asset_id}/valuations", status_code=status.HTTP_201_CREATED)
 def create_valuation(
     asset_id: str, payload: ValuationCreate, db: Session = Depends(get_db)
@@ -544,7 +578,9 @@ def create_scheduled_investment(
     payload: ScheduledInvestmentCreate, db: Session = Depends(get_db)
 ) -> dict[str, object]:
     _get_active(db, Asset, payload.asset_id)
-    _get_active(db, DataSource, payload.data_source_id)
+    source = _get_active(db, DataSource, payload.data_source_id)
+    if "unit_price" not in source.output_mapping:
+        raise HTTPException(status_code=422, detail="所选报价数据源未映射 unit_price，不能用于定投。")
     values = payload.model_dump()
     plan = ScheduledInvestment(**values)
     plan.timezone = "Asia/Shanghai"

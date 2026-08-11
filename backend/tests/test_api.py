@@ -7,6 +7,7 @@ from app.models import (
     Asset,
     Basket,
     DataSource,
+    DataSourceRun,
     LedgerEntry,
     NotificationRule,
     PortfolioSnapshot,
@@ -126,6 +127,39 @@ def test_sale_rejects_units_above_current_holding(client, db, auth_headers) -> N
     )
     assert response.status_code == 422
     assert asset.units == Decimal("1")
+
+
+def test_asset_sync_runs_only_its_bound_source(client, db, auth_headers, monkeypatch) -> None:
+    asset = db.scalar(select(Asset).where(Asset.name == "成长资产"))
+    source = DataSource(
+        name="单资产报价", code="def fetch(payload): return {'items': []}",
+        input_mapping={"code": "symbol"}, output_mapping={"unit_price": "price"},
+        asset_ids=[asset.id], packages=[],
+    )
+    db.add(source)
+    db.commit()
+    received: dict[str, object] = {}
+
+    def execute_one(session, selected_source, *, asset_ids=None, **_kwargs):
+        received["source_id"] = selected_source.id
+        received["asset_ids"] = asset_ids
+        asset.unit_price = Decimal("9.9")
+        asset.price_updated_at = datetime.now(timezone.utc)
+        run = DataSourceRun(
+            data_source_id=selected_source.id, status="success",
+            started_at=datetime.now(timezone.utc), finished_at=datetime.now(timezone.utc),
+            input_payload={}, output_payload={}, duration_ms=12,
+        )
+        session.add(run)
+        session.commit()
+        return run
+
+    monkeypatch.setattr("app.api.execute_data_source", execute_one)
+    response = client.post(f"/api/v1/assets/{asset.id}/sync", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["unitPrice"] == 9.9
+    assert received == {"source_id": source.id, "asset_ids": [asset.id]}
 
 
 def test_allocation_preview_uses_current_basket_values(client, auth_headers) -> None:

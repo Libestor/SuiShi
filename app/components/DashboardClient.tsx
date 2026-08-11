@@ -386,7 +386,11 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       window.dispatchEvent(new Event("platform-unauthorized"));
     }
     const payload = await response.json().catch(() => ({ detail: "请求失败" }));
-    throw new Error(payload.detail ?? `请求失败：${response.status}`);
+    const detail = payload.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((item) => `${Array.isArray(item?.loc) ? item.loc.at(-1) : "字段"}：${item?.msg ?? "输入无效"}`).join("；")
+      : typeof detail === "string" ? detail : `请求失败：${response.status}`;
+    throw new Error(message);
   }
   return response.status === 204 ? (undefined as T) : response.json();
 }
@@ -1018,6 +1022,7 @@ function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged:
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState<Asset | null>(null);
   const [selling, setSelling] = useState<Asset | null>(null);
+  const [syncingAssetId, setSyncingAssetId] = useState("");
   const [message, setMessage] = useState("");
   const total = data.assets.reduce((sum, asset) => sum + asset.valueCny, 0);
 
@@ -1075,6 +1080,17 @@ function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged:
     } catch (error) { setMessage(error instanceof Error ? error.message : "删除失败"); }
   };
 
+  const syncAsset = async (asset: Asset) => {
+    setSyncingAssetId(asset.id);
+    try {
+      const result = await api<{ sourceName: string; durationMs: number; unitPrice: number }>(`/assets/${asset.id}/sync`, { method: "POST" });
+      await onChanged();
+      setMessage(`${asset.name} 已通过“${result.sourceName}”同步，最新单价 ${result.unitPrice.toLocaleString("zh-CN")}。`);
+      onNotice(`${asset.name} 已单独同步`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "单独同步失败"); }
+    finally { setSyncingAssetId(""); }
+  };
+
   return (
     <div className="page-stack subpage">
       <section className="subpage-title"><div><p className="section-kicker">资产台账</p><h1>每一片叶子，都有来处。</h1><p>共 {data.assets.length} 项资产，产品价值 {money(total, true)}；卖出资金会回到所属篮子的待投资资产。</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}>＋ 添加资产</button></section>
@@ -1103,7 +1119,7 @@ function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged:
             <span>{asset.units.toLocaleString("zh-CN", { maximumFractionDigits: 4 })} × {asset.unitPrice.toLocaleString("zh-CN") } {asset.currency}</span>
             <strong>{money(asset.valueCny, true)}</strong>
             <span className={asset.ageHours >= 48 ? "status-stale" : "status-fresh"}>{asset.freshnessLabel}</span>
-            <span className="asset-row-actions"><button className="row-action" onClick={() => setSelling(asset)}>调仓</button><button className="row-action" onClick={() => setSelected(asset)}>编辑</button></span>
+            <span className="asset-row-actions"><button className="row-action" disabled={syncingAssetId === asset.id} onClick={() => syncAsset(asset)}>{syncingAssetId === asset.id ? "同步中" : "同步"}</button><button className="row-action" onClick={() => setSelling(asset)}>调仓</button><button className="row-action" onClick={() => setSelected(asset)}>编辑</button></span>
           </div>
         ))}
       </section>
@@ -1303,6 +1319,10 @@ function ScheduledInvestmentsView({ assets, onChanged, onNotice }: { assets: Ass
   const toggle = async (plan: ScheduledInvestmentView) => { try { await api(`/scheduled-investments/${plan.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !plan.enabled }) }); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "状态更新失败"); } };
   const remove = async (plan: ScheduledInvestmentView) => { if (!window.confirm(`删除“${plan.name}”？历史执行与流水不会删除。`)) return; try { await api(`/scheduled-investments/${plan.id}`, { method: "DELETE" }); await load(); if (editingId === plan.id) reset(); } catch (error) { setMessage(error instanceof Error ? error.message : "删除失败"); } };
   const selectableSources = sources.filter((source) => !draft.assetId || source.assetIds.length === 0 || source.assetIds.includes(draft.assetId));
+  const selectAsset = (assetId: string) => {
+    const boundSources = sources.filter((source) => source.assetIds.includes(assetId));
+    setDraft((current) => ({ ...current, assetId, dataSourceId: boundSources.length === 1 ? boundSources[0].id : "" }));
+  };
   return <div className="page-stack subpage investment-page">
     <section className="subpage-title"><div><p className="section-kicker">自动定投</p><h1>按时记账，报价要新。</h1><p>系统不会代替你向券商下单；它会先执行指定报价脚本，再从对应篮子的待购买金额中记录买入。</p></div></section>
     {message && <button className="inline-message settings-message" type="button" onClick={() => setMessage("")}>{message}<span>×</span></button>}
@@ -1312,8 +1332,8 @@ function ScheduledInvestmentsView({ assets, onChanged, onNotice }: { assets: Ass
         <div className="setting-form investment-fields">
           <label>计划名称<input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="例如：沪深300每周定投" /></label>
           <label>每次金额（元）<input type="number" min="0.01" step="0.01" value={draft.amountCny} onChange={(event) => setDraft((current) => ({ ...current, amountCny: event.target.value }))} /></label>
-          <label>购买产品<select value={draft.assetId} disabled={Boolean(editingId)} onChange={(event) => setDraft((current) => ({ ...current, assetId: event.target.value, dataSourceId: "" }))}><option value="">选择产品</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.basketName} · {asset.name}</option>)}</select></label>
-          <label>最新报价数据源<select value={draft.dataSourceId} onChange={(event) => setDraft((current) => ({ ...current, dataSourceId: event.target.value }))}><option value="">选择报价数据源</option>{selectableSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
+          <label>购买产品<select value={draft.assetId} disabled={Boolean(editingId)} onChange={(event) => selectAsset(event.target.value)}><option value="">选择产品</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.basketName} · {asset.name}</option>)}</select></label>
+          <label>最新报价数据源<select value={draft.dataSourceId} onChange={(event) => setDraft((current) => ({ ...current, dataSourceId: event.target.value }))}><option value="">选择报价数据源</option>{selectableSources.map((source) => <option key={source.id} value={source.id}>{source.name}{source.assetIds.includes(draft.assetId) ? "（已绑定）" : ""}</option>)}</select></label>
           <label>周期<select value={draft.frequency} onChange={(event) => setDraft((current) => ({ ...current, frequency: event.target.value as ScheduledInvestmentView["frequency"] }))}><option value="weekly">单周</option><option value="biweekly">双周</option><option value="monthly">单月</option></select></label>
           {draft.frequency === "monthly" ? <label>每月日期<input type="number" min="1" max="31" value={draft.dayOfMonth} onChange={(event) => setDraft((current) => ({ ...current, dayOfMonth: event.target.value }))} /></label> : <label>执行星期<select value={draft.weekday} onChange={(event) => setDraft((current) => ({ ...current, weekday: event.target.value }))}>{WEEKDAYS.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>}
           <label>执行时间<input type="time" value={draft.timeOfDay} onChange={(event) => setDraft((current) => ({ ...current, timeOfDay: event.target.value }))} /></label>

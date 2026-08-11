@@ -183,7 +183,7 @@ class ScheduledInvestmentCreate(BaseModel):
     frequency: Literal["weekly", "biweekly", "monthly"]
     weekday: int | None = Field(default=None, ge=0, le=6)
     day_of_month: int | None = Field(default=None, ge=1, le=31)
-    time_of_day: str = Field(default="09:30", pattern=r"^([01]\\d|2[0-3]):[0-5]\\d$")
+    time_of_day: str = Field(default="09:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     anchor_date: date | None = None
     retry_attempts: int = Field(default=3, ge=1, le=5)
     enabled: bool = True
@@ -203,7 +203,7 @@ class ScheduledInvestmentUpdate(BaseModel):
     frequency: Literal["weekly", "biweekly", "monthly"] | None = None
     weekday: int | None = Field(default=None, ge=0, le=6)
     day_of_month: int | None = Field(default=None, ge=1, le=31)
-    time_of_day: str | None = Field(default=None, pattern=r"^([01]\\d|2[0-3]):[0-5]\\d$")
+    time_of_day: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     anchor_date: date | None = None
     retry_attempts: int | None = Field(default=None, ge=1, le=5)
     enabled: bool | None = None
