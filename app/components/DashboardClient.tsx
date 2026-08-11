@@ -1401,6 +1401,7 @@ function AutomationView({ assets, onNotice }: { assets: Asset[]; onNotice: (mess
         method: "POST", body: JSON.stringify({ asset_ids: [] }),
       });
       await reload(draft.id);
+      await onChanged();
       setStatus(`执行${result.status === "success" ? "成功" : "完成"}，用时 ${result.durationMs} ms`);
       onNotice(`脚本执行${result.status === "success" ? "成功" : "完成"}`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "执行失败"); }
