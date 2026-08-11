@@ -121,6 +121,39 @@ def deliver_event(
     return delivery
 
 
+def dispatch_event(
+    db: Session,
+    *,
+    event_type: str,
+    event_key: str,
+    title: str,
+    message: str,
+    current_value: Decimal | None = None,
+) -> list[NotificationDelivery]:
+    """Deliver an application event to rules explicitly subscribing to that event type."""
+
+    deliveries: list[NotificationDelivery] = []
+    rules = db.scalars(
+        select(NotificationRule).where(
+            NotificationRule.deleted_at.is_(None),
+            NotificationRule.enabled.is_(True),
+            NotificationRule.event_type == event_type,
+        )
+    )
+    for rule in rules:
+        delivery = deliver_event(
+            db,
+            rule,
+            event_key=event_key,
+            current_value=current_value,
+            title=title,
+            message=message,
+        )
+        if delivery is not None:
+            deliveries.append(delivery)
+    return deliveries
+
+
 def evaluate_rules(db: Session, context: dict[str, Any]) -> list[NotificationDelivery]:
     deliveries: list[NotificationDelivery] = []
     rules = db.scalars(

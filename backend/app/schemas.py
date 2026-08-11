@@ -100,6 +100,15 @@ class LedgerCreate(BaseModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
+class LedgerUpdate(BaseModel):
+    amount: Decimal | None = None
+    units_delta: Decimal | None = None
+    unit_price: Decimal | None = Field(default=None, ge=0)
+    fx_rate: Decimal | None = Field(default=None, gt=0)
+    occurred_at: datetime | None = None
+    note: str | None = None
+
+
 class GoalCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     target_amount_cny: Decimal = Field(gt=0)
@@ -154,6 +163,40 @@ class DataSourceUpdate(BaseModel):
 class DataSourceExecuteRequest(BaseModel):
     asset_ids: list[str] = Field(default_factory=list)
     payload: dict[str, Any] | None = None
+
+
+class ScheduledInvestmentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    asset_id: str
+    data_source_id: str
+    amount_cny: Decimal = Field(gt=0)
+    frequency: Literal["weekly", "biweekly", "monthly"]
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    time_of_day: str = Field(default="09:30", pattern=r"^([01]\\d|2[0-3]):[0-5]\\d$")
+    anchor_date: date | None = None
+    retry_attempts: int = Field(default=3, ge=1, le=5)
+    enabled: bool = True
+
+    @field_validator("day_of_month")
+    @classmethod
+    def require_monthly_day(cls, value: int | None, info: Any) -> int | None:
+        if info.data.get("frequency") == "monthly" and value is None:
+            raise ValueError("monthly frequency requires day_of_month")
+        return value
+
+
+class ScheduledInvestmentUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    data_source_id: str | None = None
+    amount_cny: Decimal | None = Field(default=None, gt=0)
+    frequency: Literal["weekly", "biweekly", "monthly"] | None = None
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    time_of_day: str | None = Field(default=None, pattern=r"^([01]\\d|2[0-3]):[0-5]\\d$")
+    anchor_date: date | None = None
+    retry_attempts: int | None = Field(default=None, ge=1, le=5)
+    enabled: bool | None = None
 
 
 class NotificationRuleCreate(BaseModel):

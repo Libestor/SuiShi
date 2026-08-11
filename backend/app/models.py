@@ -150,6 +150,53 @@ class InvestmentPlan(RecordMixin, Base):
     next_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ScheduledInvestment(RecordMixin, Base):
+    """A recurring, internal purchase record for one existing asset.
+
+    It intentionally records a purchase in SuiShi only; it never places a broker order.
+    """
+
+    __tablename__ = "scheduled_investments"
+
+    name: Mapped[str] = mapped_column(String(160))
+    asset_id: Mapped[str] = mapped_column(ForeignKey("assets.id"), index=True)
+    data_source_id: Mapped[str] = mapped_column(ForeignKey("data_sources.id"), index=True)
+    amount_cny: Mapped[Decimal] = mapped_column(Numeric(20, 4))
+    frequency: Mapped[str] = mapped_column(String(16))  # weekly | biweekly | monthly
+    weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    time_of_day: Mapped[str] = mapped_column(String(5), default="09:30")
+    anchor_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    timezone: Mapped[str] = mapped_column(String(48), default="Asia/Shanghai")
+    retry_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    last_status: Mapped[str] = mapped_column(String(24), default="never")
+
+
+class ScheduledInvestmentRun(RecordMixin, Base):
+    __tablename__ = "scheduled_investment_runs"
+
+    scheduled_investment_id: Mapped[str] = mapped_column(
+        ForeignKey("scheduled_investments.id"), index=True
+    )
+    ledger_entry_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ledger_entries.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24))
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data_source_run_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    quote_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 10), nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    units_delta: Mapped[Decimal | None] = mapped_column(Numeric(28, 10), nullable=True)
+    amount_cny: Mapped[Decimal] = mapped_column(Numeric(20, 4))
+    error_message: Mapped[str] = mapped_column(Text, default="")
+
+
 class PendingTask(RecordMixin, Base):
     __tablename__ = "pending_tasks"
 
@@ -253,3 +300,16 @@ class AuditLog(Base):
     before_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     after_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ArchivedAuditRecord(Base):
+    """Cold audit data, kept queryable without slowing the operational tables."""
+
+    __tablename__ = "archived_audit_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    source_type: Mapped[str] = mapped_column(String(48), index=True)
+    source_id: Mapped[str] = mapped_column(String(36), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    archived_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

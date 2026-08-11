@@ -4,13 +4,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
     Asset,
+    ArchivedAuditRecord,
     AuditLog,
     Basket,
     DataSource,
@@ -19,6 +20,8 @@ from app.models import (
     LedgerEntry,
     NotificationRule,
     NotificationDelivery,
+    ScheduledInvestment,
+    ScheduledInvestmentRun,
     Valuation,
 )
 from app.schemas import (
@@ -32,9 +35,12 @@ from app.schemas import (
     DataSourceUpdate,
     GoalCreate,
     LedgerCreate,
+    LedgerUpdate,
     NotificationRuleCreate,
     NotificationRuleUpdate,
     PlatformSettingsUpdate,
+    ScheduledInvestmentCreate,
+    ScheduledInvestmentUpdate,
     ValuationCreate,
 )
 from app.security import require_platform_token
@@ -44,6 +50,7 @@ from app.services.portfolio import calculate_totals, dashboard_payload, save_por
 from app.services.notifications import deliver_event, evaluate_rules
 from app.services.versioning import save_data_source_version
 from app.services.settings import get_platform_settings
+from app.services.scheduled_investments import run_scheduled_investment, set_next_due
 
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_platform_token)])
@@ -79,6 +86,54 @@ def _get_active(db: Session, model: Any, entity_id: str) -> Any:
     if entity is None:
         raise HTTPException(status_code=404, detail=f"{model.__name__} not found")
     return entity
+
+
+def _ledger_payload(entry: LedgerEntry) -> dict[str, object]:
+    return {
+        "id": entry.id,
+        "kind": entry.kind,
+        "status": entry.status,
+        "basketId": entry.basket_id,
+        "destinationBasketId": entry.destination_basket_id,
+        "assetId": entry.asset_id,
+        "amount": float(entry.amount),
+        "currency": entry.currency,
+        "unitsDelta": float(entry.units_delta),
+        "unitPrice": float(entry.unit_price) if entry.unit_price is not None else None,
+        "fxRate": float(entry.fx_rate),
+        "occurredAt": entry.occurred_at,
+        "note": entry.note,
+        "metadata": entry.metadata_json,
+    }
+
+
+def _apply_ledger_effect(db: Session, entry: LedgerEntry, multiplier: Decimal) -> None:
+    """Apply (or reverse) one confirmed ledger entry to its balances."""
+
+    amount_cny = entry.amount * entry.fx_rate * multiplier
+    basket = _get_active(db, Basket, entry.basket_id) if entry.basket_id else None
+    destination = _get_active(db, Basket, entry.destination_basket_id) if entry.destination_basket_id else None
+    asset = _get_active(db, Asset, entry.asset_id) if entry.asset_id else None
+    if entry.kind in {"opening", "external_deposit", "dividend", "interest"} and basket:
+        basket.cash_balance_cny += amount_cny
+    elif entry.kind in {"external_withdrawal", "fee", "tax"} and basket:
+        basket.cash_balance_cny -= amount_cny
+    elif entry.kind == "basket_transfer" and basket and destination:
+        basket.cash_balance_cny -= amount_cny
+        destination.cash_balance_cny += amount_cny
+    elif entry.kind == "buy" and basket and asset:
+        basket.cash_balance_cny -= amount_cny
+        asset.units += entry.units_delta * multiplier
+    elif entry.kind == "sell" and basket and asset:
+        basket.cash_balance_cny += amount_cny
+        asset.units += entry.units_delta * multiplier
+
+
+def _validate_schedule_fields(plan: ScheduledInvestment) -> None:
+    if plan.frequency in {"weekly", "biweekly"} and plan.weekday is None:
+        raise HTTPException(status_code=422, detail="单周和双周定投需要选择星期几。")
+    if plan.frequency == "monthly" and plan.day_of_month is None:
+        raise HTTPException(status_code=422, detail="单月定投需要选择每月日期。")
 
 
 @router.get("/dashboard")
@@ -160,6 +215,17 @@ def create_asset(payload: AssetCreate, db: Session = Depends(get_db)) -> Asset:
             value_cny=asset.value_cny,
             observed_at=now,
             source="opening",
+        )
+    )
+    db.add(
+        AuditLog(
+            entity_type="asset",
+            entity_id=asset.id,
+            action="create",
+            after_json=_json_safe(
+                {"name": asset.name, "basketId": asset.basket_id, "units": asset.units,
+                 "unitPrice": asset.unit_price, "fxRate": asset.fx_rate}
+            ),
         )
     )
     db.commit()
@@ -260,6 +326,18 @@ def create_valuation(
         raw_payload=payload.raw_payload,
     )
     db.add(valuation)
+    db.flush()
+    db.add(
+        AuditLog(
+            entity_type="valuation",
+            entity_id=valuation.id,
+            action="create",
+            after_json=_json_safe(
+                {"assetId": asset.id, "unitPrice": asset.unit_price, "fxRate": asset.fx_rate,
+                 "observedAt": observed_at, "source": payload.source, "rawPayload": payload.raw_payload}
+            ),
+        )
+    )
     db.commit()
     return {"id": valuation.id, "valueCny": float(valuation.value_cny), "observedAt": observed_at}
 
@@ -267,32 +345,6 @@ def create_valuation(
 @router.post("/ledger", status_code=status.HTTP_201_CREATED)
 def create_ledger_entry(payload: LedgerCreate, db: Session = Depends(get_db)) -> dict[str, object]:
     occurred_at = payload.occurred_at or datetime.now(timezone.utc)
-    basket = _get_active(db, Basket, payload.basket_id) if payload.basket_id else None
-    destination = (
-        _get_active(db, Basket, payload.destination_basket_id)
-        if payload.destination_basket_id
-        else None
-    )
-    asset = _get_active(db, Asset, payload.asset_id) if payload.asset_id else None
-    amount_cny = payload.amount * payload.fx_rate
-
-    if payload.kind in {"opening", "external_deposit", "dividend", "interest"} and basket:
-        basket.cash_balance_cny += amount_cny
-    elif payload.kind in {"external_withdrawal", "fee", "tax"} and basket:
-        basket.cash_balance_cny -= amount_cny
-    elif payload.kind == "basket_transfer" and basket and destination:
-        basket.cash_balance_cny -= amount_cny
-        destination.cash_balance_cny += amount_cny
-    elif payload.kind == "buy" and basket and asset:
-        basket.cash_balance_cny -= amount_cny
-        asset.units += payload.units_delta
-        if payload.unit_price is not None:
-            asset.unit_price = payload.unit_price
-            asset.price_updated_at = occurred_at
-    elif payload.kind == "sell" and basket and asset:
-        basket.cash_balance_cny += amount_cny
-        asset.units += payload.units_delta
-
     entry = LedgerEntry(
         kind=payload.kind,
         basket_id=payload.basket_id,
@@ -309,8 +361,246 @@ def create_ledger_entry(payload: LedgerCreate, db: Session = Depends(get_db)) ->
         metadata_json=payload.metadata_json,
     )
     db.add(entry)
+    db.flush()
+    _apply_ledger_effect(db, entry, Decimal("1"))
+    if payload.kind == "buy" and payload.unit_price is not None and payload.asset_id:
+        asset = _get_active(db, Asset, payload.asset_id)
+        asset.unit_price = payload.unit_price
+        asset.price_updated_at = occurred_at
+    db.add(
+        AuditLog(
+            entity_type="ledger_entry",
+            entity_id=entry.id,
+            action="create",
+            after_json=_json_safe(_ledger_payload(entry)),
+        )
+    )
     db.commit()
     return {"id": entry.id, "kind": entry.kind, "occurredAt": entry.occurred_at}
+
+
+@router.get("/ledger")
+def list_ledger_entries(
+    limit: int = Query(default=100, ge=1, le=500), db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    entries = db.scalars(
+        select(LedgerEntry)
+        .where(LedgerEntry.deleted_at.is_(None))
+        .order_by(LedgerEntry.occurred_at.desc())
+        .limit(limit)
+    )
+    return [_ledger_payload(entry) for entry in entries]
+
+
+@router.patch("/ledger/{entry_id}")
+def update_ledger_entry(
+    entry_id: str, payload: LedgerUpdate, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    entry = _get_active(db, LedgerEntry, entry_id)
+    if entry.status != "confirmed":
+        raise HTTPException(status_code=409, detail="已撤销的流水不能编辑。")
+    changes = payload.model_dump(exclude_unset=True)
+    before = _ledger_payload(entry)
+    _apply_ledger_effect(db, entry, Decimal("-1"))
+    for key, value in changes.items():
+        setattr(entry, key, value)
+    _apply_ledger_effect(db, entry, Decimal("1"))
+    if "unit_price" in changes and entry.asset_id and entry.unit_price is not None:
+        asset = _get_active(db, Asset, entry.asset_id)
+        asset.unit_price = entry.unit_price
+        asset.price_updated_at = entry.occurred_at
+    db.add(
+        AuditLog(
+            entity_type="ledger_entry",
+            entity_id=entry.id,
+            action="update",
+            before_json=_json_safe(before),
+            after_json=_json_safe(_ledger_payload(entry)),
+        )
+    )
+    db.commit()
+    return _ledger_payload(entry)
+
+
+@router.delete("/ledger/{entry_id}")
+def void_ledger_entry(entry_id: str, db: Session = Depends(get_db)) -> dict[str, object]:
+    entry = _get_active(db, LedgerEntry, entry_id)
+    if entry.status != "confirmed":
+        raise HTTPException(status_code=409, detail="该流水已经撤销。")
+    before = _ledger_payload(entry)
+    _apply_ledger_effect(db, entry, Decimal("-1"))
+    entry.status = "voided"
+    db.add(
+        AuditLog(
+            entity_type="ledger_entry",
+            entity_id=entry.id,
+            action="void",
+            before_json=_json_safe(before),
+            after_json=_json_safe(_ledger_payload(entry)),
+        )
+    )
+    db.commit()
+    return _ledger_payload(entry)
+
+
+def _scheduled_investment_payload(db: Session, plan: ScheduledInvestment) -> dict[str, object]:
+    asset = _get_active(db, Asset, plan.asset_id)
+    source = _get_active(db, DataSource, plan.data_source_id)
+    return {
+        "id": plan.id,
+        "name": plan.name,
+        "assetId": plan.asset_id,
+        "assetName": asset.name,
+        "basketId": asset.basket_id,
+        "dataSourceId": plan.data_source_id,
+        "dataSourceName": source.name,
+        "amountCny": float(plan.amount_cny),
+        "frequency": plan.frequency,
+        "weekday": plan.weekday,
+        "dayOfMonth": plan.day_of_month,
+        "timeOfDay": plan.time_of_day,
+        "anchorDate": plan.anchor_date,
+        "timezone": plan.timezone,
+        "retryAttempts": plan.retry_attempts,
+        "enabled": plan.enabled,
+        "lastRunAt": plan.last_run_at,
+        "nextRunAt": plan.next_run_at,
+        "lastStatus": plan.last_status,
+    }
+
+
+@router.get("/scheduled-investments")
+def list_scheduled_investments(db: Session = Depends(get_db)) -> list[dict[str, object]]:
+    plans = db.scalars(
+        select(ScheduledInvestment)
+        .where(ScheduledInvestment.deleted_at.is_(None))
+        .order_by(ScheduledInvestment.created_at)
+    )
+    return [_scheduled_investment_payload(db, plan) for plan in plans]
+
+
+@router.post("/scheduled-investments", status_code=status.HTTP_201_CREATED)
+def create_scheduled_investment(
+    payload: ScheduledInvestmentCreate, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    _get_active(db, Asset, payload.asset_id)
+    _get_active(db, DataSource, payload.data_source_id)
+    values = payload.model_dump()
+    plan = ScheduledInvestment(**values)
+    plan.timezone = "Asia/Shanghai"
+    if plan.frequency == "biweekly" and plan.anchor_date is None:
+        plan.anchor_date = datetime.now(timezone.utc).astimezone().date()
+    _validate_schedule_fields(plan)
+    set_next_due(plan)
+    db.add(plan)
+    db.flush()
+    db.add(
+        AuditLog(
+            entity_type="scheduled_investment",
+            entity_id=plan.id,
+            action="create",
+            after_json=_json_safe(_scheduled_investment_payload(db, plan)),
+        )
+    )
+    db.commit()
+    return _scheduled_investment_payload(db, plan)
+
+
+@router.patch("/scheduled-investments/{plan_id}")
+def update_scheduled_investment(
+    plan_id: str, payload: ScheduledInvestmentUpdate, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    plan = _get_active(db, ScheduledInvestment, plan_id)
+    changes = payload.model_dump(exclude_unset=True)
+    if changes.get("data_source_id"):
+        _get_active(db, DataSource, changes["data_source_id"])
+    before = _scheduled_investment_payload(db, plan)
+    for key, value in changes.items():
+        setattr(plan, key, value)
+    _validate_schedule_fields(plan)
+    if plan.enabled:
+        set_next_due(plan)
+    else:
+        plan.next_run_at = None
+    db.add(
+        AuditLog(
+            entity_type="scheduled_investment",
+            entity_id=plan.id,
+            action="update",
+            before_json=_json_safe(before),
+            after_json=_json_safe(_scheduled_investment_payload(db, plan)),
+        )
+    )
+    db.commit()
+    return _scheduled_investment_payload(db, plan)
+
+
+@router.delete("/scheduled-investments/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scheduled_investment(plan_id: str, db: Session = Depends(get_db)) -> None:
+    plan = _get_active(db, ScheduledInvestment, plan_id)
+    before = _scheduled_investment_payload(db, plan)
+    plan.deleted_at = datetime.now(timezone.utc)
+    plan.enabled = False
+    plan.next_run_at = None
+    db.add(
+        AuditLog(
+            entity_type="scheduled_investment",
+            entity_id=plan.id,
+            action="soft_delete",
+            before_json=_json_safe(before),
+            after_json={"deletedAt": plan.deleted_at.isoformat()},
+        )
+    )
+    db.commit()
+
+
+@router.post("/scheduled-investments/{plan_id}/run")
+def run_scheduled_investment_now(plan_id: str, db: Session = Depends(get_db)) -> dict[str, object]:
+    plan = _get_active(db, ScheduledInvestment, plan_id)
+    run = run_scheduled_investment(db, plan)
+    return {
+        "id": run.id,
+        "status": run.status,
+        "ledgerEntryId": run.ledger_entry_id,
+        "unitPrice": float(run.unit_price) if run.unit_price is not None else None,
+        "fxRate": float(run.fx_rate) if run.fx_rate is not None else None,
+        "unitsDelta": float(run.units_delta) if run.units_delta is not None else None,
+        "errorMessage": run.error_message,
+    }
+
+
+@router.get("/scheduled-investments/{plan_id}/runs")
+def list_scheduled_investment_runs(
+    plan_id: str, db: Session = Depends(get_db)
+) -> list[dict[str, object]]:
+    _get_active(db, ScheduledInvestment, plan_id)
+    runs = db.scalars(
+        select(ScheduledInvestmentRun)
+        .where(
+            ScheduledInvestmentRun.scheduled_investment_id == plan_id,
+            ScheduledInvestmentRun.deleted_at.is_(None),
+        )
+        .order_by(ScheduledInvestmentRun.started_at.desc())
+        .limit(30)
+    )
+    return [
+        {
+            "id": run.id,
+            "status": run.status,
+            "scheduledFor": run.scheduled_for,
+            "startedAt": run.started_at,
+            "finishedAt": run.finished_at,
+            "ledgerEntryId": run.ledger_entry_id,
+            "dataSourceRunIds": run.data_source_run_ids,
+            "quote": run.quote_payload,
+            "unitPrice": float(run.unit_price) if run.unit_price is not None else None,
+            "fxRate": float(run.fx_rate) if run.fx_rate is not None else None,
+            "unitsDelta": float(run.units_delta) if run.units_delta is not None else None,
+            "amountCny": float(run.amount_cny),
+            "errorMessage": run.error_message,
+        }
+        for run in runs
+    ]
 
 
 @router.post("/allocations/preview")
@@ -644,3 +934,120 @@ def list_notification_deliveries(db: Session = Depends(get_db)) -> list[dict[str
         }
         for item in deliveries
     ]
+
+
+@router.get("/audit-records")
+def list_audit_records(
+    record_type: str | None = None,
+    include_archived: bool = False,
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> list[dict[str, object]]:
+    """Unified, newest-first audit feed. Full raw fetch payloads are intentionally retained."""
+
+    records: list[dict[str, object]] = []
+    if record_type in (None, "manual_change"):
+        for item in db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit)):
+            records.append(
+                {
+                    "id": f"audit:{item.id}",
+                    "recordType": "manual_change",
+                    "occurredAt": item.created_at,
+                    "archived": False,
+                    "summary": f"{item.entity_type} · {item.action}",
+                    "payload": {
+                        "entityType": item.entity_type,
+                        "entityId": item.entity_id,
+                        "action": item.action,
+                        "before": item.before_json,
+                        "after": item.after_json,
+                    },
+                }
+            )
+    if record_type in (None, "data_source_run"):
+        for item in db.scalars(
+            select(DataSourceRun).order_by(DataSourceRun.started_at.desc()).limit(limit)
+        ):
+            records.append(
+                {
+                    "id": f"source-run:{item.id}",
+                    "recordType": "data_source_run",
+                    "occurredAt": item.started_at,
+                    "archived": False,
+                    "summary": f"数据源执行 · {item.status}",
+                    "payload": {
+                        "dataSourceId": item.data_source_id,
+                        "status": item.status,
+                        "startedAt": item.started_at,
+                        "finishedAt": item.finished_at,
+                        "input": item.input_payload,
+                        "output": item.output_payload,
+                        "error": item.error_message,
+                        "durationMs": item.duration_ms,
+                    },
+                }
+            )
+    if record_type in (None, "scheduled_investment_run"):
+        for item in db.scalars(
+            select(ScheduledInvestmentRun).order_by(ScheduledInvestmentRun.started_at.desc()).limit(limit)
+        ):
+            records.append(
+                {
+                    "id": f"scheduled-run:{item.id}",
+                    "recordType": "scheduled_investment_run",
+                    "occurredAt": item.started_at,
+                    "archived": False,
+                    "summary": f"定投执行 · {item.status}",
+                    "payload": {
+                        "scheduledInvestmentId": item.scheduled_investment_id,
+                        "ledgerEntryId": item.ledger_entry_id,
+                        "status": item.status,
+                        "scheduledFor": item.scheduled_for,
+                        "dataSourceRunIds": item.data_source_run_ids,
+                        "quote": item.quote_payload,
+                        "unitPrice": item.unit_price,
+                        "fxRate": item.fx_rate,
+                        "unitsDelta": item.units_delta,
+                        "amountCny": item.amount_cny,
+                        "error": item.error_message,
+                    },
+                }
+            )
+    if record_type in (None, "notification_delivery"):
+        for item in db.scalars(
+            select(NotificationDelivery).order_by(NotificationDelivery.delivered_at.desc()).limit(limit)
+        ):
+            records.append(
+                {
+                    "id": f"delivery:{item.id}",
+                    "recordType": "notification_delivery",
+                    "occurredAt": item.delivered_at,
+                    "archived": False,
+                    "summary": f"事件推送 · {item.status}",
+                    "payload": {
+                        "ruleId": item.rule_id,
+                        "eventKey": item.event_key,
+                        "status": item.status,
+                        "responseStatus": item.response_status,
+                        "responseExcerpt": item.response_excerpt,
+                        "suppressedReason": item.suppressed_reason,
+                    },
+                }
+            )
+    if include_archived:
+        archive_query = select(ArchivedAuditRecord).order_by(ArchivedAuditRecord.occurred_at.desc())
+        if record_type is not None:
+            archive_query = archive_query.where(ArchivedAuditRecord.source_type == record_type)
+        for item in db.scalars(archive_query.limit(limit)):
+            records.append(
+                {
+                    "id": f"archive:{item.id}",
+                    "recordType": item.source_type,
+                    "occurredAt": item.occurred_at,
+                    "archived": True,
+                    "summary": f"已归档 · {item.source_type}",
+                    "payload": item.payload_json,
+                }
+            )
+    records.sort(key=lambda item: str(item["occurredAt"]), reverse=True)
+    return records[:limit]

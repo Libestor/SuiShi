@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Asset, DataSource, DataSourceRun, Valuation
+from app.services.notifications import dispatch_event
 
 
 SCRIPT_WRITABLE_FIELDS = {"unit_price", "fx_rate"}
@@ -47,6 +48,7 @@ def execute_data_source(
     *,
     asset_ids: list[str] | None = None,
     explicit_payload: dict[str, Any] | None = None,
+    notify_failure: bool = True,
 ) -> DataSourceRun:
     started = datetime.now(timezone.utc)
     start_perf = time.perf_counter()
@@ -138,4 +140,12 @@ def execute_data_source(
 
     db.commit()
     db.refresh(run)
+    if run.status == "failed" and notify_failure:
+        dispatch_event(
+            db,
+            event_type="data_source_failed",
+            event_key=f"data-source:{source.id}:{run.id}",
+            title=f"数据源拉取失败：{source.name}",
+            message=f"数据源“{source.name}”执行失败：{run.error_message[:500]}",
+        )
     return run

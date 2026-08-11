@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-type View = "overview" | "assets" | "automation" | "achievements" | "settings";
+type View = "overview" | "assets" | "investment" | "automation" | "audit" | "achievements" | "settings";
 
 type Basket = {
   id: string;
@@ -112,6 +112,40 @@ type NotificationRuleView = {
   headersJson: Record<string, string>;
   bodyTemplate: string;
 };
+
+type ScheduledInvestmentView = {
+  id: string;
+  name: string;
+  assetId: string;
+  assetName: string;
+  basketId: string;
+  dataSourceId: string;
+  dataSourceName: string;
+  amountCny: number;
+  frequency: "weekly" | "biweekly" | "monthly";
+  weekday: number | null;
+  dayOfMonth: number | null;
+  timeOfDay: string;
+  anchorDate: string | null;
+  timezone: string;
+  retryAttempts: number;
+  enabled: boolean;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastStatus: string;
+};
+
+type AuditRecord = {
+  id: string;
+  recordType: string;
+  occurredAt: string;
+  archived: boolean;
+  summary: string;
+  payload: Record<string, unknown>;
+};
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+const API_CREDENTIALS: RequestCredentials = API_BASE_URL ? "include" : "same-origin";
 
 const now = new Date();
 const DEMO: Dashboard = {
@@ -300,9 +334,9 @@ function percent(value: number) {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/v1${path}`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1${path}`, {
     ...init,
-    credentials: "same-origin",
+    credentials: API_CREDENTIALS,
     headers: {
       "Content-Type": "application/json",
       ...init?.headers,
@@ -328,8 +362,8 @@ function LoginView({ onAuthenticated }: { onAuthenticated: () => void }) {
     const form = new FormData(event.currentTarget);
     setSubmitting(true); setMessage("");
     try {
-      const response = await fetch("/api/v1/auth/login", {
-        method: "POST", credentials: "same-origin",
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
+        method: "POST", credentials: API_CREDENTIALS,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: form.get("token") }),
       });
@@ -385,7 +419,7 @@ export function DashboardClient() {
 
   useEffect(() => {
     let active = true;
-    fetch("/api/v1/auth/session", { credentials: "same-origin" })
+    fetch(`${API_BASE_URL}/api/v1/auth/session`, { credentials: API_CREDENTIALS })
       .then((response) => response.json())
       .then((session: { authenticated: boolean }) => { if (active) setAuthState(session.authenticated ? "authenticated" : "anonymous"); })
       .catch(() => { if (active) setAuthState("anonymous"); });
@@ -421,7 +455,7 @@ export function DashboardClient() {
   };
 
   const logout = async () => {
-    await fetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+    await fetch(`${API_BASE_URL}/api/v1/auth/logout`, { method: "POST", credentials: API_CREDENTIALS }).catch(() => undefined);
     setAuthState("anonymous"); setData(DEMO); setView("overview");
   };
 
@@ -443,7 +477,9 @@ export function DashboardClient() {
         <main>
           {view === "overview" && <Overview data={data} onChanged={refresh} onNotice={setNotice} />}
           {view === "assets" && <AssetsView data={data} onChanged={refresh} onNotice={setNotice} />}
+          {view === "investment" && <ScheduledInvestmentsView assets={data.assets} onNotice={setNotice} onChanged={refresh} />}
           {view === "automation" && <AutomationView assets={data.assets} onNotice={setNotice} />}
+          {view === "audit" && <AuditView />}
           {view === "achievements" && <AchievementsView data={data} />}
           {view === "settings" && <SettingsView data={data} onChanged={refresh} onNotice={setNotice} />}
         </main>
@@ -457,7 +493,9 @@ function Sidebar({ view, setView }: { view: View; setView: (view: View) => void 
   const items: { id: View; label: string; glyph: string }[] = [
     { id: "overview", label: "总览", glyph: "田" },
     { id: "assets", label: "资产", glyph: "叶" },
+    { id: "investment", label: "定投", glyph: "投" },
     { id: "automation", label: "自动化", glyph: "流" },
+    { id: "audit", label: "审计", glyph: "录" },
     { id: "achievements", label: "成就", glyph: "果" },
     { id: "settings", label: "设置", glyph: "设" },
   ];
@@ -489,9 +527,9 @@ function Sidebar({ view, setView }: { view: View; setView: (view: View) => void 
 function MobileNav({ view, setView }: { view: View; setView: (view: View) => void }) {
   return (
     <nav className="mobile-nav" aria-label="手机导航">
-      {(["overview", "assets", "automation", "achievements", "settings"] as View[]).map((id) => (
+      {(["overview", "assets", "investment", "automation", "audit", "settings"] as View[]).map((id) => (
         <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}>
-          {id === "overview" ? "总览" : id === "assets" ? "资产" : id === "automation" ? "自动化" : id === "achievements" ? "成就" : "设置"}
+          {id === "overview" ? "总览" : id === "assets" ? "资产" : id === "investment" ? "定投" : id === "automation" ? "自动化" : id === "audit" ? "审计" : "设置"}
         </button>
       ))}
     </nav>
@@ -995,6 +1033,88 @@ function FieldGuide({ selectedCount, onClose }: { selectedCount: number; onClose
   );
 }
 
+const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+function ScheduledInvestmentsView({ assets, onChanged, onNotice }: { assets: Asset[]; onChanged: () => Promise<void>; onNotice: (message: string) => void }) {
+  const [plans, setPlans] = useState<ScheduledInvestmentView[]>([]);
+  const [sources, setSources] = useState<DataSourceView[]>([]);
+  const [message, setMessage] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [draft, setDraft] = useState({ name: "", assetId: "", dataSourceId: "", amountCny: "", frequency: "weekly" as ScheduledInvestmentView["frequency"], weekday: "0", dayOfMonth: "10", timeOfDay: "09:30", anchorDate: "", retryAttempts: "3" });
+  const load = async () => {
+    const [nextPlans, nextSources] = await Promise.all([api<ScheduledInvestmentView[]>("/scheduled-investments"), api<DataSourceView[]>("/data-sources")]);
+    setPlans(nextPlans); setSources(nextSources);
+  };
+  useEffect(() => {
+    let active = true;
+    Promise.all([api<ScheduledInvestmentView[]>("/scheduled-investments"), api<DataSourceView[]>("/data-sources")])
+      .then(([nextPlans, nextSources]) => { if (active) { setPlans(nextPlans); setSources(nextSources); } })
+      .catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "定投设置读取失败"); });
+    return () => { active = false; };
+  }, []);
+  const reset = () => { setEditingId(""); setDraft({ name: "", assetId: "", dataSourceId: "", amountCny: "", frequency: "weekly", weekday: "0", dayOfMonth: "10", timeOfDay: "09:30", anchorDate: "", retryAttempts: "3" }); };
+  const edit = (plan: ScheduledInvestmentView) => {
+    setEditingId(plan.id);
+    setDraft({ name: plan.name, assetId: plan.assetId, dataSourceId: plan.dataSourceId, amountCny: String(plan.amountCny), frequency: plan.frequency, weekday: String(plan.weekday ?? 0), dayOfMonth: String(plan.dayOfMonth ?? 10), timeOfDay: plan.timeOfDay, anchorDate: plan.anchorDate?.slice(0, 10) ?? "", retryAttempts: String(plan.retryAttempts) });
+  };
+  const save = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    try {
+      if (!draft.assetId || !draft.dataSourceId || !Number(draft.amountCny)) throw new Error("请选择产品、报价数据源，并填写定投金额。");
+      const payload = { name: draft.name || "定投计划", asset_id: draft.assetId, data_source_id: draft.dataSourceId, amount_cny: draft.amountCny, frequency: draft.frequency, weekday: draft.frequency === "monthly" ? null : Number(draft.weekday), day_of_month: draft.frequency === "monthly" ? Number(draft.dayOfMonth) : null, time_of_day: draft.timeOfDay, anchor_date: draft.frequency === "biweekly" && draft.anchorDate ? draft.anchorDate : null, retry_attempts: Number(draft.retryAttempts), enabled: true };
+      if (editingId) await api(`/scheduled-investments/${editingId}`, { method: "PATCH", body: JSON.stringify({ ...payload, asset_id: undefined }) });
+      else await api("/scheduled-investments", { method: "POST", body: JSON.stringify(payload) });
+      await load(); reset(); setMessage("定投计划已保存。每次执行会先拉取最新报价，再按 4 位小数计算份额。"); onNotice("定投计划已保存");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "保存定投失败"); }
+  };
+  const run = async (plan: ScheduledInvestmentView) => {
+    try { const result = await api<{ status: string; unitsDelta: number | null; errorMessage: string }>(`/scheduled-investments/${plan.id}/run`, { method: "POST" }); await load(); await onChanged(); setMessage(result.status === "success" ? `已记录自动定投：${result.unitsDelta} 份。` : `未执行：${result.errorMessage}`); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "执行定投失败"); }
+  };
+  const toggle = async (plan: ScheduledInvestmentView) => { try { await api(`/scheduled-investments/${plan.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !plan.enabled }) }); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "状态更新失败"); } };
+  const remove = async (plan: ScheduledInvestmentView) => { if (!window.confirm(`删除“${plan.name}”？历史执行与流水不会删除。`)) return; try { await api(`/scheduled-investments/${plan.id}`, { method: "DELETE" }); await load(); if (editingId === plan.id) reset(); } catch (error) { setMessage(error instanceof Error ? error.message : "删除失败"); } };
+  const selectableSources = sources.filter((source) => !draft.assetId || source.assetIds.length === 0 || source.assetIds.includes(draft.assetId));
+  return <div className="page-stack subpage investment-page">
+    <section className="subpage-title"><div><p className="section-kicker">自动定投</p><h1>按时记账，报价要新。</h1><p>系统不会代替你向券商下单；它会先执行指定报价脚本，再从对应篮子的待购买金额中记录买入。</p></div></section>
+    {message && <button className="inline-message settings-message" type="button" onClick={() => setMessage("")}>{message}<span>×</span></button>}
+    <section className="investment-layout">
+      <form className="panel investment-form" onSubmit={save}>
+        <PanelHeading title={editingId ? "编辑定投计划" : "新建定投计划"} subtitle="时区固定为中国标准时间；失败时最多重试三次" action="Asia/Shanghai" />
+        <div className="setting-form investment-fields">
+          <label>计划名称<input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="例如：沪深300每周定投" /></label>
+          <label>每次金额（元）<input type="number" min="0.01" step="0.01" value={draft.amountCny} onChange={(event) => setDraft((current) => ({ ...current, amountCny: event.target.value }))} /></label>
+          <label>购买产品<select value={draft.assetId} disabled={Boolean(editingId)} onChange={(event) => setDraft((current) => ({ ...current, assetId: event.target.value, dataSourceId: "" }))}><option value="">选择产品</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.basketName} · {asset.name}</option>)}</select></label>
+          <label>最新报价数据源<select value={draft.dataSourceId} onChange={(event) => setDraft((current) => ({ ...current, dataSourceId: event.target.value }))}><option value="">选择报价数据源</option>{selectableSources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>
+          <label>周期<select value={draft.frequency} onChange={(event) => setDraft((current) => ({ ...current, frequency: event.target.value as ScheduledInvestmentView["frequency"] }))}><option value="weekly">单周</option><option value="biweekly">双周</option><option value="monthly">单月</option></select></label>
+          {draft.frequency === "monthly" ? <label>每月日期<input type="number" min="1" max="31" value={draft.dayOfMonth} onChange={(event) => setDraft((current) => ({ ...current, dayOfMonth: event.target.value }))} /></label> : <label>执行星期<select value={draft.weekday} onChange={(event) => setDraft((current) => ({ ...current, weekday: event.target.value }))}>{WEEKDAYS.map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>}
+          <label>执行时间<input type="time" value={draft.timeOfDay} onChange={(event) => setDraft((current) => ({ ...current, timeOfDay: event.target.value }))} /></label>
+          {draft.frequency === "biweekly" && <label>双周基准日<input type="date" value={draft.anchorDate} onChange={(event) => setDraft((current) => ({ ...current, anchorDate: event.target.value }))} /></label>}
+          <label>失败重试次数<input type="number" min="1" max="5" value={draft.retryAttempts} onChange={(event) => setDraft((current) => ({ ...current, retryAttempts: event.target.value }))} /></label>
+        </div>
+        <p className="setting-note">金额不足仍会记录购买，待购买金额将变为负数，并触发可配置的异常事件推送。份额以 <code>金额 ÷（单价 × 汇率）</code> 计算，向下保留 4 位小数。</p>
+        <div className="settings-actions">{editingId && <button type="button" onClick={reset}>取消编辑</button>}<button className="primary-button" type="submit">{editingId ? "保存修改" : "创建定投"}</button></div>
+      </form>
+      <section className="panel investment-list"><PanelHeading title="已有计划" subtitle="可暂停、立即执行或修改；删除不影响历史审计" action={`${plans.length} 条`} />
+        <div className="investment-cards">{plans.map((plan) => <article key={plan.id} className={!plan.enabled ? "investment-card paused" : "investment-card"}><div><strong>{plan.name}</strong><small>{plan.assetName} · {plan.dataSourceName}</small></div><b>{money(plan.amountCny, true)}</b><span>{plan.frequency === "monthly" ? `每月 ${plan.dayOfMonth} 日` : `${plan.frequency === "biweekly" ? "每双周" : "每周"}${WEEKDAYS[plan.weekday ?? 0]} · ${plan.timeOfDay}`}</span><small>下次：{plan.nextRunAt ? new Date(plan.nextRunAt).toLocaleString("zh-CN") : "已暂停"} · 上次 {plan.lastStatus === "never" ? "尚未执行" : plan.lastStatus}</small><div className="investment-actions"><button type="button" onClick={() => edit(plan)}>编辑</button><button type="button" onClick={() => run(plan)}>立即执行</button><button type="button" onClick={() => toggle(plan)}>{plan.enabled ? "暂停" : "恢复"}</button><button className="danger-button" type="button" onClick={() => remove(plan)}>删除</button></div></article>)}{plans.length === 0 && <p className="empty-copy">还没有定投计划。先为产品绑定一个能返回 <code>unit_price</code> 的数据源。</p>}</div>
+      </section>
+    </section>
+  </div>;
+}
+
+function AuditView() {
+  const [records, setRecords] = useState<AuditRecord[]>([]);
+  const [kind, setKind] = useState("");
+  const [archived, setArchived] = useState(false);
+  const [selected, setSelected] = useState<AuditRecord | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => { const params = new URLSearchParams({ limit: "150" }); if (kind) params.set("record_type", kind); if (archived) params.set("include_archived", "true"); api<AuditRecord[]>(`/audit-records?${params}`).then(setRecords).catch((error) => setMessage(error instanceof Error ? error.message : "审计记录读取失败")); }, [kind, archived]);
+  return <div className="page-stack subpage audit-page"><section className="subpage-title"><div><p className="section-kicker">审计与调试</p><h1>每一次变化，都有回声。</h1><p>热数据保留 30 天；到期后归档，仍可查询原始脚本输入、输出、报价和份额计算。</p></div></section>{message && <p className="inline-message">{message}</p>}<section className="panel audit-panel"><div className="audit-toolbar"><label>类型<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="">全部</option><option value="manual_change">手动更改</option><option value="data_source_run">数据拉取</option><option value="scheduled_investment_run">定投执行</option><option value="notification_delivery">事件推送</option></select></label><label><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> 包含已归档记录</label><span>{records.length} 条</span></div><div className="audit-list">{records.map((record) => <button key={record.id} type="button" className={selected?.id === record.id ? "audit-row active" : "audit-row"} onClick={() => setSelected(record)}><span>{new Date(record.occurredAt).toLocaleString("zh-CN")}</span><strong>{record.summary}</strong><em>{record.archived ? "已归档" : "热数据"}</em></button>)}{records.length === 0 && <p className="empty-copy">暂无符合筛选条件的审计记录。</p>}</div>{selected && <pre className="audit-detail">{JSON.stringify(selected.payload, null, 2)}</pre>}</section></div>;
+}
+
+function AutomationFieldGuide({ onClose }: { onClose: () => void }) {
+  return <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="automation-field-guide-title"><button className="modal-dismiss" type="button" aria-label="关闭字段说明" onClick={onClose} /><section className="modal-card field-guide-modal"><div className="modal-heading"><div><p className="section-kicker">字段说明</p><h2 id="automation-field-guide-title">自动化、定投与推送</h2></div><button type="button" className="row-action" onClick={onClose}>关闭</button></div><div className="field-reference"><div><code>定投频率</code><strong>单周、双周、单月</strong><span>固定按中国时区触发；双周以设置的基准日计算隔周。</span></div><div><code>最新报价</code><strong>unit_price / fx_rate</strong><span>执行指定数据源后更新的单价与汇率；份额按金额除以二者乘积计算，向下保留 4 位。</span></div><div><code>待购买金额</code><strong>可为负</strong><span>定投从对应篮子扣减，负数意味着需要人工补记资金，并可触发事件推送。</span></div><div><code>data_source_failed</code><strong>数据源拉取失败</strong><span>任意脚本拉取失败时触发；定投报价失败也会在重试后记录事件。</span></div><div><code>scheduled_investment_cash_negative</code><strong>待购买金额为负</strong><span>自动定投完成后，目标篮子的待购买金额小于 0 时触发。</span></div><div><code>{"{{event.title}}"}</code><strong>消息模板变量</strong><span>还可使用 <code>{"{{event.message}}"}</code>、<code>{"{{event.currentValue}}"}</code>、<code>{"{{event.triggeredAt}}"}</code>。</span></div></div><p className="field-guide-copy">审计页保留手动修改、脚本输入输出、定投报价/份额计算与推送响应；热数据保留 30 天，之后可在归档记录中查询。</p></section></div>;
+}
+
 function AutomationView({ assets, onNotice }: { assets: Asset[]; onNotice: (message: string) => void }) {
   const [sources, setSources] = useState<DataSourceView[]>([]);
   const [draft, setDraft] = useState<DataSourceView>(freshDataSource);
@@ -1144,9 +1264,10 @@ function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChange
   });
   const [rules, setRules] = useState<NotificationRuleView[]>([]);
   const [message, setMessage] = useState("");
+  const [showAutomationFieldGuide, setShowAutomationFieldGuide] = useState(false);
   const [expenses, setExpenses] = useState({ rent: 0, food: 0, utilities: 0, transport: 0, insurance: 0, other: 0, months: 6 });
   const [ruleDraft, setRuleDraft] = useState({
-    id: "", name: "总资产达到 30 万", metricPath: "portfolio.total_asset_cny", operator: ">=" as NotificationRuleView["operator"], threshold: "300000",
+    id: "", name: "总资产达到 30 万", eventType: "generic_metric", metricPath: "portfolio.total_asset_cny", operator: ">=" as NotificationRuleView["operator"], threshold: "300000",
     webhookUrl: "", headers: "{}", bodyTemplate: '{"title":"{{event.title}}","message":"{{event.message}}","currentValue":"{{event.currentValue}}","triggeredAt":"{{event.triggeredAt}}"}',
     windowHours: "24", maxDeliveries: "1", enabled: true,
   });
@@ -1186,13 +1307,13 @@ function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChange
 
   const loadRules = async () => setRules(await api<NotificationRuleView[]>("/notification-rules"));
   const editRule = (rule: NotificationRuleView) => setRuleDraft({
-    id: rule.id, name: rule.name, metricPath: rule.metricPath, operator: rule.operator,
+    id: rule.id, name: rule.name, eventType: rule.eventType, metricPath: rule.metricPath, operator: rule.operator,
     threshold: rule.threshold === null ? "" : String(rule.threshold), webhookUrl: rule.webhookUrl,
     headers: JSON.stringify(rule.headersJson ?? {}, null, 2), bodyTemplate: rule.bodyTemplate,
     windowHours: String(rule.windowSeconds / 3600), maxDeliveries: String(rule.maxDeliveries), enabled: rule.enabled,
   });
   const newRule = () => setRuleDraft({
-    id: "", name: "总资产达到 30 万", metricPath: "portfolio.total_asset_cny", operator: ">=", threshold: "300000", webhookUrl: "", headers: "{}",
+    id: "", name: "总资产达到 30 万", eventType: "generic_metric", metricPath: "portfolio.total_asset_cny", operator: ">=", threshold: "300000", webhookUrl: "", headers: "{}",
     bodyTemplate: '{"title":"{{event.title}}","message":"{{event.message}}","currentValue":"{{event.currentValue}}","triggeredAt":"{{event.triggeredAt}}"}', windowHours: "24", maxDeliveries: "1", enabled: true,
   });
   const saveRule = async () => {
@@ -1200,8 +1321,8 @@ function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChange
       const headers = JSON.parse(ruleDraft.headers || "{}");
       if (!ruleDraft.webhookUrl.trim()) throw new Error("请填写 Webhook URL");
       const payload = {
-        name: ruleDraft.name, event_type: "generic_metric", metric_path: ruleDraft.metricPath,
-        operator: ruleDraft.operator, threshold: ruleDraft.threshold || null, webhook_url: ruleDraft.webhookUrl,
+        name: ruleDraft.name, event_type: ruleDraft.eventType, metric_path: ruleDraft.metricPath,
+        operator: ruleDraft.operator, threshold: ruleDraft.eventType === "generic_metric" ? ruleDraft.threshold || null : null, webhook_url: ruleDraft.webhookUrl,
         headers_json: headers, body_template: ruleDraft.bodyTemplate,
         window_seconds: Math.max(1, Number(ruleDraft.windowHours)) * 3600,
         max_deliveries: Math.max(1, Number(ruleDraft.maxDeliveries)), enabled: ruleDraft.enabled,
@@ -1275,12 +1396,12 @@ function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChange
       </section>
 
       <section className="panel settings-card webhook-settings">
-        <div className="webhook-settings-head"><PanelHeading title="外部推送连接" subtitle="用 URL、Header 和占位符模板发送事件" action={`${rules.length} 条规则`} /><button type="button" onClick={newRule}>＋ 新建规则</button></div>
+        <div className="webhook-settings-head"><PanelHeading title="外部推送连接" subtitle="用 URL、Header 和占位符模板发送事件" action={`${rules.length} 条规则`} /><div className="webhook-head-actions"><button type="button" onClick={() => setShowAutomationFieldGuide(true)}>字段说明</button><button type="button" onClick={newRule}>＋ 新建规则</button></div></div>
         <div className="webhook-settings-grid">
           <div className="webhook-rule-list">
             {rules.map((rule) => (
               <div className={ruleDraft.id === rule.id ? "webhook-rule-card active" : "webhook-rule-card"} key={rule.id}>
-                <button className="webhook-rule-main" type="button" onClick={() => editRule(rule)}><span className="webhook-icon">↗</span><span><strong>{rule.name}</strong><small>{rule.metricPath} {rule.operator} {rule.threshold ?? "事件值"}</small><em>{rule.windowSeconds / 3600} 小时内最多 {rule.maxDeliveries} 次</em></span></button>
+                <button className="webhook-rule-main" type="button" onClick={() => editRule(rule)}><span className="webhook-icon">↗</span><span><strong>{rule.name}</strong><small>{rule.eventType === "generic_metric" ? `${rule.metricPath} ${rule.operator} ${rule.threshold ?? ""}` : rule.eventType}</small><em>{rule.windowSeconds / 3600} 小时内最多 {rule.maxDeliveries} 次</em></span></button>
                 <button type="button" className={rule.enabled ? "switch on" : "switch"} aria-label={rule.enabled ? "停用推送" : "启用推送"} onClick={() => toggleRule(rule)} />
               </div>
             ))}
@@ -1290,9 +1411,10 @@ function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChange
             <div className="webhook-editor-title"><strong>{ruleDraft.id ? "编辑推送规则" : "新建推送规则"}</strong><span>可使用 <code>{"{{event.title}}"}</code>、<code>{"{{event.currentValue}}"}</code>、<code>{"{{event.triggeredAt}}"}</code></span></div>
             <div className="setting-form webhook-fields">
               <label>规则名称<input value={ruleDraft.name} onChange={(event) => setRuleDraft((current) => ({ ...current, name: event.target.value }))} /></label>
-              <label>数据路径<input value={ruleDraft.metricPath} onChange={(event) => setRuleDraft((current) => ({ ...current, metricPath: event.target.value }))} /></label>
+              <label>触发事件<select value={ruleDraft.eventType} onChange={(event) => setRuleDraft((current) => ({ ...current, eventType: event.target.value }))}><option value="generic_metric">指标阈值</option><option value="data_source_failed">数据源拉取失败</option><option value="scheduled_investment_quote_failed">定投报价失败</option><option value="scheduled_investment_cash_negative">定投后待购买金额为负</option></select></label>
+              {ruleDraft.eventType === "generic_metric" && <><label>数据路径<input value={ruleDraft.metricPath} onChange={(event) => setRuleDraft((current) => ({ ...current, metricPath: event.target.value }))} /></label>
               <label>比较方式<select value={ruleDraft.operator} onChange={(event) => setRuleDraft((current) => ({ ...current, operator: event.target.value as NotificationRuleView["operator"] }))}><option>&gt;=</option><option>&gt;</option><option>&lt;=</option><option>&lt;</option><option>=</option></select></label>
-              <label>触发值<input type="number" step="any" value={ruleDraft.threshold} onChange={(event) => setRuleDraft((current) => ({ ...current, threshold: event.target.value }))} /></label>
+              <label>触发值<input type="number" step="any" value={ruleDraft.threshold} onChange={(event) => setRuleDraft((current) => ({ ...current, threshold: event.target.value }))} /></label></>}
               <label className="wide-field">Webhook URL<input type="url" value={ruleDraft.webhookUrl} onChange={(event) => setRuleDraft((current) => ({ ...current, webhookUrl: event.target.value }))} placeholder="https://example.com/webhook" /></label>
               <label className="wide-field">Headers（JSON）<textarea value={ruleDraft.headers} onChange={(event) => setRuleDraft((current) => ({ ...current, headers: event.target.value }))} /></label>
               <label>窗口（小时）<input type="number" min="0.01" step="any" value={ruleDraft.windowHours} onChange={(event) => setRuleDraft((current) => ({ ...current, windowHours: event.target.value }))} /></label>
@@ -1303,6 +1425,7 @@ function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChange
           </div>
         </div>
       </section>
+      {showAutomationFieldGuide && <AutomationFieldGuide onClose={() => setShowAutomationFieldGuide(false)} />}
     </div>
   );
 }
