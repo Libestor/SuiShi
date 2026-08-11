@@ -422,6 +422,22 @@ def update_data_source(
     return {"id": source.id, "name": source.name, "gitRevision": source.git_revision}
 
 
+@router.delete("/data-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_data_source(source_id: str, db: Session = Depends(get_db)) -> None:
+    source = _get_active(db, DataSource, source_id)
+    source.deleted_at = datetime.now(timezone.utc)
+    db.add(
+        AuditLog(
+            entity_type="data_source",
+            entity_id=source.id,
+            action="soft_delete",
+            before_json={"deleted_at": None},
+            after_json={"deleted_at": source.deleted_at.isoformat()},
+        )
+    )
+    db.commit()
+
+
 @router.post("/data-sources/{source_id}/execute")
 def run_data_source(
     source_id: str,
@@ -521,6 +537,22 @@ def update_notification_rule(
     )
     db.commit()
     return {"id": rule.id, "name": rule.name, "enabled": rule.enabled}
+
+
+@router.delete("/notification-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_notification_rule(rule_id: str, db: Session = Depends(get_db)) -> None:
+    rule = _get_active(db, NotificationRule, rule_id)
+    rule.deleted_at = datetime.now(timezone.utc)
+    db.add(
+        AuditLog(
+            entity_type="notification_rule",
+            entity_id=rule.id,
+            action="soft_delete",
+            before_json={"deleted_at": None},
+            after_json={"deleted_at": rule.deleted_at.isoformat()},
+        )
+    )
+    db.commit()
 
 
 @router.get("/settings")

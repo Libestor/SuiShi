@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from sqlalchemy import func, select
 
-from app.models import Asset, DataSource, Valuation
+from app.models import Asset, DataSource, NotificationRule, Valuation
 
 from conftest import TEST_PLATFORM_TOKEN
 
@@ -174,3 +174,32 @@ def test_data_source_can_bind_assets_and_update_mapping(client, db, auth_headers
     saved = next(item for item in listed if item["id"] == source.id)
     assert saved["assetIds"] == [assets[0].id]
     assert saved["inputMapping"] == {"fund_code": "symbol"}
+
+
+def test_data_source_and_notification_rule_can_be_deleted(client, db, auth_headers) -> None:
+    source = DataSource(
+        name="待删除数据源",
+        code="def fetch(payload):\n    return {'items': []}\n",
+        input_mapping={},
+        output_mapping={},
+        asset_ids=[],
+        packages=[],
+    )
+    rule = NotificationRule(
+        name="待删除推送",
+        event_type="generic_metric",
+        metric_path="portfolio.total_asset_cny",
+        operator=">=",
+        threshold=Decimal("1"),
+        webhook_url="https://example.com/webhook",
+    )
+    db.add_all([source, rule])
+    db.commit()
+
+    assert client.delete(f"/api/v1/data-sources/{source.id}", headers=auth_headers).status_code == 204
+    assert client.delete(f"/api/v1/notification-rules/{rule.id}", headers=auth_headers).status_code == 204
+
+    assert db.scalar(select(DataSource.deleted_at).where(DataSource.id == source.id)) is not None
+    assert db.scalar(select(NotificationRule.deleted_at).where(NotificationRule.id == rule.id)) is not None
+    assert source.id not in {item["id"] for item in client.get("/api/v1/data-sources", headers=auth_headers).json()}
+    assert rule.id not in {item["id"] for item in client.get("/api/v1/notification-rules", headers=auth_headers).json()}

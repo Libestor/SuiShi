@@ -783,6 +783,17 @@ function AssetsView({ data, onChanged }: { data: Dashboard; onChanged: () => Pro
     } catch (error) { setMessage(error instanceof Error ? error.message : "更新失败"); }
   };
 
+  const deleteAsset = async () => {
+    if (!selected) return;
+    if (!window.confirm(`确定删除“${selected.name}”吗？该资产会从当前台账中移除，历史估值将保留。`)) return;
+    try {
+      await api(`/assets/${selected.id}`, { method: "DELETE" });
+      setSelected(null);
+      setMessage(`已删除“${selected.name}”，历史记录已保留`);
+      await onChanged();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "删除失败"); }
+  };
+
   return (
     <div className="page-stack subpage">
       <section className="subpage-title"><div><p className="section-kicker">资产台账</p><h1>每一片叶子，都有来处。</h1><p>共 {data.assets.length} 项资产，产品价值 {money(total, true)}。</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}>＋ 添加资产</button></section>
@@ -832,7 +843,7 @@ function AssetsView({ data, onChanged }: { data: Dashboard; onChanged: () => Pro
               <label className="wide-field">数据源属性（JSON）<textarea name="sourceAttributes" defaultValue={JSON.stringify(selected.sourceAttributes, null, 2)} placeholder={'{"fund_code":"000300"}'} /></label>
               <label className="wide-field">备注<textarea name="note" defaultValue={selected.note} placeholder="记录持有理由、计算口径等" /></label>
             </div>
-            <div className="form-actions"><button type="button" onClick={() => setSelected(null)}>取消</button><button className="primary-button" type="submit">保存全部修改</button></div>
+            <div className="form-actions"><button type="button" className="danger-button" onClick={deleteAsset}>删除资产</button><span /><button type="button" onClick={() => setSelected(null)}>取消</button><button className="primary-button" type="submit">保存全部修改</button></div>
           </form>
         </div>
       )}
@@ -854,11 +865,27 @@ function freshDataSource(): DataSourceView {
   };
 }
 
+const INPUT_FIELD_REFERENCE = [
+  { value: "name", title: "资产名称", description: "用于脚本日志或按名称区分资产，例如“沪深300指数基金”。" },
+  { value: "platform", title: "持有平台", description: "资产所在的平台或券商，例如支付宝、券商账户。" },
+  { value: "symbol", title: "资产代码", description: "查询市场行情时使用的代码，例如 000300、VOO。" },
+  { value: "unit_price", title: "当前单价", description: "上一次记录的单价；可作为脚本查询失败时的备用值。" },
+  { value: "fx_rate", title: "人民币汇率", description: "外币资产换算成人民币时使用的汇率。" },
+  { value: "units", title: "持有数量", description: "当前持有的份额或币数。" },
+  { value: "currency", title: "计价币种", description: "资产单价的币种，例如 CNY、USD、USDT。" },
+  { value: "source_attributes.字段名", title: "自定义资料", description: "资产里额外保存的资料，例如 source_attributes.fund_code。" },
+];
+
+const OUTPUT_FIELD_REFERENCE = [
+  { value: "unit_price", title: "当前单价", description: "将脚本返回的价格写回资产，并记录一笔新估值。" },
+  { value: "fx_rate", title: "人民币汇率", description: "将脚本返回的汇率写回资产。" },
+  { value: "source_attributes.字段名", title: "自定义资料", description: "保存脚本返回的附加信息，例如净值日期。" },
+];
+
 function MappingEditor({
-  title, hint, value, onChange, output = false,
+  title, value, onChange, output = false,
 }: {
   title: string;
-  hint: string;
   value: Record<string, string>;
   onChange: (value: Record<string, string>) => void;
   output?: boolean;
@@ -876,18 +903,39 @@ function MappingEditor({
     while (key in value) key = `${output ? "unit_price" : "function_field"}_${suffix++}`;
     onChange({ ...value, [key]: output ? "result_field" : "asset_field" });
   };
+  const assetFieldListId = output ? "writable-asset-fields" : "readable-asset-fields";
   return (
     <div className="mapping-editor">
-      <div className="mapping-title"><div><strong>{title}</strong><small>{hint}</small></div><button type="button" onClick={add}>＋ 添加映射</button></div>
-      {entries.length === 0 && <p className="empty-copy">还没有字段映射。</p>}
+      <div className="mapping-title"><div><strong>{title}</strong></div><button type="button" onClick={add}>＋ 添加字段</button></div>
+      <div className="mapping-columns"><span>{output ? "要更新的资产资料" : "脚本中读取的名称"}</span><span>{output ? "脚本返回的名称" : "每项资产提供的资料"}</span></div>
+      {entries.length === 0 && <p className="empty-copy">尚未添加字段。</p>}
       {entries.map(([left, right], index) => (
         <div className="mapping-edit-row" key={`${left}-${index}`}>
-          <input aria-label={output ? "资产字段" : "函数输入字段"} value={left} onChange={(event) => update(index, 0, event.target.value)} />
+          <input aria-label={output ? "写回资产的字段" : "脚本接收的变量名"} list={output ? assetFieldListId : undefined} value={left} onChange={(event) => update(index, 0, event.target.value)} />
           <span>→</span>
-          <input aria-label={output ? "函数返回字段" : "资产字段"} value={right} onChange={(event) => update(index, 1, event.target.value)} />
+          <input aria-label={output ? "脚本返回的字段" : "从资产读取的字段"} list={output ? undefined : assetFieldListId} value={right} onChange={(event) => update(index, 1, event.target.value)} />
           <button type="button" aria-label="移除映射" onClick={() => remove(index)}>×</button>
         </div>
       ))}
+      <datalist id="readable-asset-fields"><option value="name" /><option value="platform" /><option value="symbol" /><option value="unit_price" /><option value="fx_rate" /><option value="units" /><option value="currency" /><option value="source_attributes.fund_code" /></datalist>
+      <datalist id="writable-asset-fields"><option value="unit_price" /><option value="fx_rate" /><option value="source_attributes.net_value_date" /></datalist>
+    </div>
+  );
+}
+
+function FieldGuide({ selectedCount, onClose }: { selectedCount: number; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="field-guide-title">
+      <button className="modal-dismiss" type="button" aria-label="关闭字段说明" onClick={onClose} />
+      <section className="modal-card field-guide-modal">
+        <div className="modal-heading"><div><p className="section-kicker">字段说明</p><h2 id="field-guide-title">脚本如何处理资产</h2></div><button type="button" className="row-action" onClick={onClose}>关闭</button></div>
+        <div className="field-guide-flow"><div><b>1</b><span>脚本运行 1 次</span></div><i>→</i><div><b>2</b><span>收到 {selectedCount || "所选"} 条资产记录</span></div><i>→</i><div><b>3</b><span>按 asset_id 写回结果</span></div></div>
+        <p className="field-guide-copy">每选择一项资产，系统就在 <code>payload.items</code> 中加入一条记录。Python 代码循环处理这些记录，并为每项资产返回一条带 <code>asset_id</code> 的结果。</p>
+        <h3>可提供给脚本的资料</h3>
+        <div className="field-reference">{INPUT_FIELD_REFERENCE.map((field) => <div key={field.value}><code>{field.value}</code><strong>{field.title}</strong><span>{field.description}</span></div>)}</div>
+        <h3>允许脚本更新的资料</h3>
+        <div className="field-reference">{OUTPUT_FIELD_REFERENCE.map((field) => <div key={field.value}><code>{field.value}</code><strong>{field.title}</strong><span>{field.description}</span></div>)}</div>
+      </section>
     </div>
   );
 }
@@ -896,6 +944,8 @@ function AutomationView({ assets }: { assets: Asset[] }) {
   const [sources, setSources] = useState<DataSourceView[]>([]);
   const [draft, setDraft] = useState<DataSourceView>(freshDataSource);
   const [status, setStatus] = useState("正在读取脚本库…");
+  const [showFieldGuide, setShowFieldGuide] = useState(false);
+  const selectedAssets = assets.filter((asset) => draft.assetIds.includes(asset.id));
 
   useEffect(() => {
     let active = true;
@@ -914,7 +964,7 @@ function AutomationView({ assets }: { assets: Asset[] }) {
     const rows = await api<DataSourceView[]>("/data-sources");
     setSources(rows);
     const current = rows.find((row) => row.id === selectedId) ?? rows[0];
-    if (current) setDraft(current);
+    setDraft(current ?? freshDataSource());
   };
 
   const changeDraft = <K extends keyof DataSourceView>(key: K, value: DataSourceView[K]) => {
@@ -950,6 +1000,16 @@ function AutomationView({ assets }: { assets: Asset[] }) {
     } catch (error) { setStatus(error instanceof Error ? error.message : "执行失败"); }
   };
 
+  const deleteSource = async () => {
+    if (!draft.id) return;
+    if (!window.confirm(`确定删除“${draft.name || "这个数据源"}”吗？历史执行记录会保留。`)) return;
+    try {
+      await api(`/data-sources/${draft.id}`, { method: "DELETE" });
+      await reload();
+      setStatus(`已删除“${draft.name || "数据源"}”，历史执行记录已保留。`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : "删除数据源失败"); }
+  };
+
   return (
     <div className="page-stack subpage">
       <section className="subpage-title"><div><p className="section-kicker">数据源与自动化</p><h1>一条数据源，就是一个可维护的脚本。</h1><p>同一个基金脚本可绑定多项基金，一次查询后分别更新对应字段。</p></div><span className="runner-badge"><i />Python 3 · uv · Git 版本</span></section>
@@ -971,7 +1031,7 @@ function AutomationView({ assets }: { assets: Asset[] }) {
 
         <div className="source-detail">
           <section className="panel source-config">
-            <div className="source-detail-head"><div><p className="section-kicker">{draft.id ? "编辑数据源" : "新数据源"}</p><h2>{draft.name || "未命名脚本"}</h2><small>{draft.gitRevision ? `Git ${draft.gitRevision.slice(0, 8)}` : "首次保存时建立 Git 版本"}{draft.lastRunAt ? ` · 上次运行 ${new Date(draft.lastRunAt).toLocaleString("zh-CN")}` : ""}</small></div><div className="source-actions"><button type="button" onClick={runSource}>立即执行</button><button className="primary-button" type="button" onClick={saveSource}>保存版本</button></div></div>
+            <div className="source-detail-head"><div><p className="section-kicker">{draft.id ? "编辑数据源" : "新数据源"}</p><h2>{draft.name || "未命名脚本"}</h2><small>{draft.gitRevision ? `Git ${draft.gitRevision.slice(0, 8)}` : "首次保存时建立 Git 版本"}{draft.lastRunAt ? ` · 上次运行 ${new Date(draft.lastRunAt).toLocaleString("zh-CN")}` : ""}</small></div><div className="source-actions">{draft.id && <button className="danger-button" type="button" onClick={deleteSource}>删除数据源</button>}<button type="button" onClick={runSource}>立即执行</button><button className="primary-button" type="button" onClick={saveSource}>保存版本</button></div></div>
             <div className="source-basic-grid">
               <label>数据源名称<input value={draft.name} onChange={(event) => changeDraft("name", event.target.value)} /></label>
               <label>入口函数<input value={draft.functionName} onChange={(event) => changeDraft("functionName", event.target.value)} /></label>
@@ -981,8 +1041,11 @@ function AutomationView({ assets }: { assets: Asset[] }) {
             </div>
           </section>
 
+          <section className="automation-summary" aria-label="脚本执行摘要"><span>脚本运行 1 次 · 处理 {draft.assetIds.length} 项资产 · 按 <code>asset_id</code> 更新结果</span><button type="button" onClick={() => setShowFieldGuide(true)}>字段说明</button></section>
+
           <section className="panel source-bindings">
-            <PanelHeading title="绑定资产" subtitle="脚本会批量接收这些资产的映射输入" action={`${draft.assetIds.length} 项已选`} />
+            <PanelHeading title="1. 选择由此脚本更新的资产" subtitle="每个勾选项都会作为一条记录传入脚本；资产名称和所属篮子不会被脚本修改" action={`${draft.assetIds.length} 项已选`} />
+            <div className={selectedAssets.length ? "selected-assets" : "selected-assets empty"}><strong>{selectedAssets.length ? "本次会传入：" : "尚未选择资产"}</strong><span>{selectedAssets.length ? `${selectedAssets.map((asset) => asset.name).join("、")}。脚本只运行 1 次，payload.items 中包含 ${selectedAssets.length} 条资产记录。` : "请先勾选本次需要查询的基金、股票或数字资产。"}</span></div>
             <div className="asset-check-grid">
               {assets.map((asset) => (
                 <label key={asset.id} className={draft.assetIds.includes(asset.id) ? "checked" : ""}>
@@ -994,8 +1057,8 @@ function AutomationView({ assets }: { assets: Asset[] }) {
           </section>
 
           <section className="panel mapping-workspace">
-            <MappingEditor title="输入映射" hint="函数字段 → 资产字段" value={draft.inputMapping} onChange={(value) => changeDraft("inputMapping", value)} />
-            <MappingEditor title="输出映射" hint="资产字段 → 函数返回字段" value={draft.outputMapping} onChange={(value) => changeDraft("outputMapping", value)} output />
+            <MappingEditor title="2. 每项资产提供给脚本的资料" value={draft.inputMapping} onChange={(value) => changeDraft("inputMapping", value)} />
+            <MappingEditor title="3. 脚本结果要更新的资产资料" value={draft.outputMapping} onChange={(value) => changeDraft("outputMapping", value)} output />
           </section>
 
           <section className="panel editor-panel source-editor">
@@ -1006,6 +1069,7 @@ function AutomationView({ assets }: { assets: Asset[] }) {
           </section>
         </div>
       </section>
+      {showFieldGuide && <FieldGuide selectedCount={draft.assetIds.length} onClose={() => setShowFieldGuide(false)} />}
     </div>
   );
 }
@@ -1099,6 +1163,16 @@ function SettingsView({ data, onChanged }: { data: Dashboard; onChanged: () => P
     try { const result = await api<{ status: string }>(`/notification-rules/${ruleDraft.id}/test`, { method: "POST" }); setMessage(`测试推送状态：${result.status}`); }
     catch (error) { setMessage(error instanceof Error ? error.message : "测试推送失败"); }
   };
+  const deleteRule = async () => {
+    if (!ruleDraft.id) return;
+    if (!window.confirm(`确定删除“${ruleDraft.name || "这个推送规则"}”吗？历史推送记录会保留。`)) return;
+    try {
+      await api(`/notification-rules/${ruleDraft.id}`, { method: "DELETE" });
+      await loadRules();
+      newRule();
+      setMessage(`已删除“${ruleDraft.name || "推送规则"}”，历史推送记录已保留。`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "删除推送规则失败"); }
+  };
 
   return (
     <div className="page-stack subpage settings-page">
@@ -1166,7 +1240,7 @@ function SettingsView({ data, onChanged }: { data: Dashboard; onChanged: () => P
               <label>窗口内最多次数<input type="number" min="1" value={ruleDraft.maxDeliveries} onChange={(event) => setRuleDraft((current) => ({ ...current, maxDeliveries: event.target.value }))} /></label>
               <label className="wide-field">消息模板<textarea value={ruleDraft.bodyTemplate} onChange={(event) => setRuleDraft((current) => ({ ...current, bodyTemplate: event.target.value }))} /></label>
             </div>
-            <div className="settings-actions"><button type="button" onClick={testRule}>发送测试</button><button className="primary-button" type="button" onClick={saveRule}>保存推送规则</button></div>
+            <div className="settings-actions">{ruleDraft.id && <button className="danger-button" type="button" onClick={deleteRule}>删除推送规则</button>}<button type="button" onClick={testRule}>发送测试</button><button className="primary-button" type="button" onClick={saveRule}>保存推送规则</button></div>
           </div>
         </div>
       </section>

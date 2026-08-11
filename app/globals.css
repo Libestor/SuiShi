@@ -265,6 +265,86 @@ main { padding: 28px 40px 56px; }
 
 .achievement-page { max-width: 1280px; }.achievement-hero { padding: 28px; display: grid; grid-template-columns: auto 1fr minmax(250px, .55fr); align-items: center; gap: 30px; background: linear-gradient(125deg, rgba(255,253,247,.96), rgba(226,233,219,.82)); }.achievement-emblem { width: 118px; height: 118px; position: relative; display: grid; place-items: center; border: 1px solid rgba(98,123,100,.16); border-radius: 50%; background: radial-gradient(circle, #fffdf7 48%, var(--green-soft) 49%, var(--green-soft) 61%, transparent 62%); }.achievement-emblem::before, .achievement-emblem::after { content: ""; position: absolute; border: 1px solid rgba(98,123,100,.13); border-radius: 50%; }.achievement-emblem::before { inset: 9px; }.achievement-emblem::after { inset: 20px; }.achievement-emblem span { font: 28px "Songti SC", serif; color: var(--green-dark); }.achievement-copy > p:first-child { margin: 0 0 6px; color: var(--terracotta); font-size: 9px; font-weight: 700; letter-spacing: .18em; }.achievement-copy h2 { margin: 0; font: 600 30px "Songti SC", serif; }.achievement-copy > p:not(:first-child) { margin: 8px 0 15px; color: var(--muted); font-size: 11px; }.wide-progress { height: 10px; overflow: hidden; border-radius: 99px; background: rgba(98,123,100,.12); }.wide-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--green-dark), #8fa48a); }.achievement-meta { margin-top: 8px; display: flex; justify-content: space-between; color: var(--muted); font-size: 9px; }.reward-box { padding: 18px; border: 1px solid rgba(185,116,81,.14); border-radius: 16px; background: rgba(255,253,247,.7); }.reward-box small, .reward-box strong, .reward-box span { display: block; }.reward-box small { color: var(--terracotta); font-size: 8px; letter-spacing: .1em; }.reward-box strong { margin-top: 7px; font: 17px "Songti SC", serif; }.reward-box p { margin: 7px 0 13px; color: var(--muted); font-size: 9px; line-height: 1.6; }.reward-box span { padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 8px; }.timeline-panel { overflow: hidden; }.achievement-timeline { padding: 27px 32px 34px; display: grid; grid-template-columns: repeat(4, 1fr); }.timeline-item { position: relative; padding-right: 20px; }.timeline-item::before { content: ""; position: absolute; left: 34px; right: 0; top: 17px; border-top: 1px dashed rgba(98,123,100,.3); }.timeline-item:last-child::before { display: none; }.timeline-mark { width: 35px; height: 35px; position: relative; z-index: 2; display: grid; place-items: center; margin-bottom: 12px; border-radius: 50%; background: var(--paper-deep); color: var(--muted); font-size: 11px; }.timeline-item.done .timeline-mark { background: var(--green-dark); color: white; }.timeline-item.active .timeline-mark { background: var(--terracotta); color: white; box-shadow: 0 0 0 6px var(--terracotta-soft); }.timeline-item small, .timeline-item strong { display: block; }.timeline-item small { color: var(--muted); font-size: 8px; }.timeline-item strong { margin-top: 5px; font: 14px "Songti SC", serif; }.timeline-item p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
 
+/* Keep body copy legible and make the type scale consistent across workspaces. */
+body { font-size: 14px; line-height: 1.5; }
+/* Display headings remain distinct, but no longer dominate the workspace. */
+.hero h1, .subpage-title h1 { font-size: clamp(30px, 3vw, 42px); line-height: 1.15; letter-spacing: -0.035em; }
+.subpage-title > div > p:last-child { font-size: 14px; }
+.section-kicker, .eyebrow { font-size: 12px; }
+.hero-copy h1 { font-size: clamp(46px, 4.6vw, 60px); line-height: 1; letter-spacing: -0.05em; }
+.hero-deltas { font-size: 14px; }
+.hero-deltas .positive { font-size: 16px; }
+.asset-table-head { font-size: 11px; }
+.asset-row { font-size: 13px; }
+.asset-name strong { font-size: 14px; font-weight: 600; }
+.asset-name small, .basket-pill, .row-action { font-size: 11px; }
+.asset-form label, .modal-card label, .editor-footer label { font-size: 12px; }
+.form-actions > span { flex: 1; }
+.danger-button { border: 1px solid rgba(185,116,81,.25) !important; border-radius: 8px; background: transparent; color: #9b5135; }
+.danger-button:hover { background: var(--terracotta-soft) !important; }
+
+.product-copy strong, .product-value strong { font-size: 13px; }
+.product-copy small, .product-value small { font-size: 11px; }
+.basket-node-copy small, .basket-node-ratio small, .root-copy small, .root-ratio small { font-size: 11px; }
+.freshness-row { min-height: 66px; }
+.freshness-row strong { font-size: 14px; }
+.freshness-row small, .freshness-row time { font-size: 12px; }
+.chart-end-value small, .chart-axis, .chart-legend { font-size: 11px; }
+.panel-heading p, .panel-heading > span, .goal-ring small, .goal-copy p, .goal-reward small, .goal-copy span { font-size: 12px; }
+.ratio-summary small, .ratio-summary span, .allocation-advice p, .allocation-form label,
+.mode-toggle button, .allocation-result span, .chart-end-value small { font-size: 12px; }
+
+/* Automation / script library: readable metadata without competing with headings. */
+.runner-badge, .editor-toolbar strong, .editor-status { font-size: 12px; }
+.editor-toolbar small { font-size: 11px; }
+.editor-panel textarea { font-size: 14px; line-height: 1.7; }
+.source-library-head strong { font-size: 19px; }
+.source-library-head small, .source-library-head button, .source-card small, .source-card em,
+.source-library-note span, .source-library-note small, .empty-copy { font-size: 11px; }
+.source-card strong { font-size: 13px; }
+.source-library-note strong { font-size: 12px; }
+.source-detail-head h2 { font-size: 20px; }
+.source-detail-head small, .source-basic-grid label, .setting-form label, .source-enabled span { font-size: 12px; }
+.source-enabled small, .asset-check-grid small { font-size: 11px; }
+.asset-check-grid strong { font-size: 12px; }
+.asset-check-grid em { font-size: 11px; }
+.mapping-panel > p, .mapping-line code, .webhook-form label, .webhook-form > p { font-size: 11px; }
+.mapping-title small, .mapping-edit-row input, .source-editor .editor-footer > span { font-size: 11px; }
+.webhook-rule strong, .webhook-rule-main strong { font-size: 12px; }
+.webhook-rule p, .webhook-rule-main small, .webhook-rule-main em, .webhook-editor-title span { font-size: 11px; }
+
+.modal-heading > span, .modal-card > p:not(.section-kicker), .webhook-form label,
+.webhook-form > p, .webhook-editor-title span { font-size: 12px; }
+
+.strategy-choice span, .setting-note, .expense-grid label, .reserve-suggestion span,
+.reserve-suggestion small, .reserve-suggestion button { font-size: 11px; }
+.achievement-copy > p:first-child, .achievement-meta, .reward-box small, .reward-box p,
+.reward-box span, .timeline-item small, .timeline-item p { font-size: 11px; }
+.strategy-choice span, .setting-note, .expense-grid label, .reserve-suggestion span,
+.reserve-suggestion small, .achievement-copy > p:first-child, .achievement-meta,
+.reward-box small, .reward-box p, .reward-box span, .timeline-item small, .timeline-item p { font-size: 12px; }
+
+/* Keep the default data-source screen compact; details live in an on-demand guide. */
+.automation-summary { padding: 10px 13px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 1px solid rgba(98,123,100,.16); border-radius: 11px; background: rgba(220,229,216,.55); color: var(--muted); font-size: 12px; line-height: 1.45; }
+.automation-summary code { color: var(--green-dark); font: 11px "SFMono-Regular", Consolas, monospace; }.automation-summary button { flex: 0 0 auto; padding: 7px 10px; border: 1px solid rgba(98,123,100,.25); border-radius: 8px; background: #fffdf8; color: var(--green-dark); cursor: pointer; font-size: 12px; font-weight: 700; }
+.selected-assets { margin: 14px 18px 0; padding: 11px 12px; display: flex; gap: 8px; border-radius: 10px; background: rgba(98,123,100,.07); color: var(--green-dark); font-size: 12px; line-height: 1.5; }
+.selected-assets strong { flex: 0 0 auto; }.selected-assets.empty { color: var(--muted); background: var(--paper-deep); }
+.mapping-workspace { align-items: start; }
+.mapping-title { min-height: auto; align-items: flex-start; }
+.mapping-title strong { font-size: 17px; }
+.mapping-title small { max-width: 360px; font-size: 12px; line-height: 1.5; }
+.mapping-columns { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.mapping-help { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.field-reference { margin-top: 11px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.field-reference > div { min-width: 0; padding: 8px 9px; display: grid; grid-template-columns: auto 1fr; gap: 2px 7px; border: 1px solid rgba(63,80,66,.09); border-radius: 8px; background: rgba(255,253,247,.66); }
+.field-reference code { grid-row: 1 / 3; align-self: start; padding: 2px 4px; border-radius: 4px; background: var(--paper-deep); color: var(--green-dark); font: 10px "SFMono-Regular", Consolas, monospace; }
+.field-reference strong { min-width: 0; font-size: 12px; }.field-reference span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.mapping-edit-row { grid-template-columns: 1fr auto 1fr auto; }
+.mapping-edit-row input { padding: 9px; font-size: 12px; }
+.field-guide-modal { width: min(760px, 100%); max-height: calc(100vh - 40px); overflow: auto; }
+.field-guide-modal h3 { margin: 20px 0 0; font: 600 16px "Songti SC", serif; }.field-guide-modal .field-reference { margin-top: 9px; }
+.field-guide-flow { padding: 12px; display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 8px; border-radius: 11px; background: var(--green-soft); }.field-guide-flow > div { display: grid; gap: 4px; justify-items: center; text-align: center; }.field-guide-flow b { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--green-dark); color: white; font-size: 12px; }.field-guide-flow span { font-size: 12px; font-weight: 700; line-height: 1.35; }.field-guide-flow i { color: var(--green-dark); font-style: normal; }.field-guide-copy { margin: 13px 0 0; color: var(--muted); font-size: 12px; line-height: 1.65; }.field-guide-copy code { padding: 2px 4px; border-radius: 4px; background: var(--paper-deep); color: var(--green-dark); font: 11px "SFMono-Regular", Consolas, monospace; }
+
 .mobile-nav { display: none; }
 
 @media (max-width: 1160px) {
@@ -297,7 +377,7 @@ main { padding: 28px 40px 56px; }
   .primary-button { padding: 9px 12px; font-size: 11px; }
   main { padding: 19px 14px 30px; }
   .hero { gap: 22px; padding-top: 4px; }
-  .hero h1 { font-size: 43px; }
+  .hero h1 { font-size: 46px; }
   .hero-deltas { gap: 8px 15px; font-size: 10px; }
   .goal-card { grid-template-columns: auto 1fr; padding: 16px; gap: 14px; }
   .goal-ring { width: 75px; height: 75px; }.goal-ring strong { font-size: 19px; }
@@ -314,11 +394,12 @@ main { padding: 28px 40px 56px; }
   .basket-node { min-height: 108px; padding: 14px; grid-template-columns: auto minmax(0, 1fr) auto; }.basket-glyph { width: 38px; height: 38px; }.basket-node-ratio { padding-left: 9px; }.basket-node-ratio strong { font-size: 17px; }
   .product-branches { margin-top: 22px; margin-left: 13px; padding-left: 14px; }.product-branches::before { top: -22px; }.product-node::before { left: -14px; width: 14px; }.product-node::after { left: -17px; }
   .ratio-summary { grid-template-columns: 1fr; }.risk-number { text-align: left; }.ratio-track { grid-row: 2; }.allocation-form { grid-template-columns: 1fr auto; }.allocation-form .text-button { grid-column: 1 / -1; }.chart-canvas { height: 150px; }
-  .subpage-title { align-items: flex-start; flex-direction: column; }.subpage-title h1 { font-size: 38px; }.subpage-title .primary-button { align-self: stretch; }
+  .subpage-title { align-items: flex-start; flex-direction: column; }.subpage-title h1 { font-size: 34px; }.subpage-title .primary-button { align-self: stretch; }
   .asset-form { grid-template-columns: 1fr; }.asset-form .wide-field { grid-column: 1; }.asset-table-head { display: none; }.asset-row { grid-template-columns: 1fr auto; gap: 7px; padding: 15px; }.asset-row > span:nth-child(2), .asset-row > span:nth-child(3), .asset-row > span:nth-child(5) { display: none; }.asset-row > strong { grid-column: 1; padding-left: 45px; }.asset-row .row-action { grid-column: 2; grid-row: 1 / 3; }
   .asset-edit-grid { grid-template-columns: 1fr; }.modal-heading { align-items: flex-start; flex-direction: column; }.modal-heading > span { text-align: left; }.asset-edit-grid .wide-field { grid-column: 1; }
   .editor-panel textarea { height: 310px; font-size: 11px; }.editor-footer { grid-template-columns: 1fr; }.side-stack { grid-template-columns: 1fr; }
   .source-list { grid-template-columns: 1fr; }.source-basic-grid { grid-template-columns: 1fr; }.source-basic-grid .wide-field { grid-column: 1; }.source-detail-head { align-items: flex-start; flex-direction: column; }.source-actions { width: 100%; }.source-actions button { flex: 1; }.asset-check-grid { grid-template-columns: 1fr; }.mapping-workspace { grid-template-columns: 1fr; }.mapping-editor + .mapping-editor { padding: 18px 0 0; border-top: 1px solid var(--line); border-left: 0; }.source-editor .editor-footer { grid-template-columns: 1fr; }
+  .automation-summary { align-items: flex-start; flex-direction: column; gap: 8px; }.selected-assets { align-items: flex-start; flex-direction: column; gap: 3px; }.mapping-columns { gap: 10px; }.mapping-title small { max-width: none; }.field-reference { grid-template-columns: 1fr; }.field-guide-flow { grid-template-columns: 1fr; justify-items: center; }.field-guide-flow i { transform: rotate(90deg); }
   .setting-form.three-columns, .webhook-fields { grid-template-columns: 1fr; }.webhook-fields label:nth-child(1), .webhook-fields label:nth-child(2) { grid-column: 1; }.expense-grid { grid-template-columns: repeat(2, 1fr); }.webhook-settings-head { align-items: stretch; padding-right: 0; flex-direction: column; }.webhook-settings-head > button { margin: 0 18px 14px; }.webhook-settings-grid { grid-template-columns: 1fr; }.webhook-rule-list { border-right: 0; border-bottom: 1px solid var(--line); }.webhook-editor-title { align-items: flex-start; flex-direction: column; }
   .freshness-panel.full-width .freshness-list { grid-template-columns: 1fr; }
   .achievement-hero { grid-template-columns: 1fr; text-align: center; }.achievement-emblem { margin: auto; }.achievement-meta { text-align: left; }.reward-box { text-align: left; }.achievement-timeline { grid-template-columns: 1fr; gap: 0; }.timeline-item { min-height: 100px; padding-left: 54px; }.timeline-item::before { left: 17px; right: auto; top: 34px; bottom: 0; height: auto; border-top: 0; border-left: 1px dashed rgba(98,123,100,.3); }.timeline-mark { position: absolute; left: 0; top: 0; }
