@@ -441,11 +441,11 @@ export function DashboardClient() {
           </button>
         )}
         <main>
-          {view === "overview" && <Overview data={data} onChanged={refresh} />}
-          {view === "assets" && <AssetsView data={data} onChanged={refresh} />}
-          {view === "automation" && <AutomationView assets={data.assets} />}
+          {view === "overview" && <Overview data={data} onChanged={refresh} onNotice={setNotice} />}
+          {view === "assets" && <AssetsView data={data} onChanged={refresh} onNotice={setNotice} />}
+          {view === "automation" && <AutomationView assets={data.assets} onNotice={setNotice} />}
           {view === "achievements" && <AchievementsView data={data} />}
-          {view === "settings" && <SettingsView data={data} onChanged={refresh} />}
+          {view === "settings" && <SettingsView data={data} onChanged={refresh} onNotice={setNotice} />}
         </main>
         <MobileNav view={view} setView={setView} />
       </div>
@@ -516,7 +516,7 @@ function Topbar({ connection, onSnapshot, onLogout }: { connection: string; onSn
   );
 }
 
-function Overview({ data, onChanged }: { data: Dashboard; onChanged: () => Promise<void> }) {
+function Overview({ data, onChanged, onNotice }: { data: Dashboard; onChanged: () => Promise<void>; onNotice: (message: string) => void }) {
   const goal = data.goals.find((item) => !item.achievedAt) ?? data.goals[0];
   const staleAssets = data.assets.filter((asset) => asset.ageHours >= 24);
   return (
@@ -536,7 +536,7 @@ function Overview({ data, onChanged }: { data: Dashboard; onChanged: () => Promi
 
       <section className="panel hierarchy-panel">
         <PanelHeading title="资产结构树" subtitle="总资产 → 三个篮子 → 具体产品" action={`${data.assets.length} 项产品 · 点击篮子收起`} />
-        <AssetTree total={data.totalAssetCny} baskets={data.baskets} assets={data.assets} onChanged={onChanged} />
+        <AssetTree total={data.totalAssetCny} baskets={data.baskets} assets={data.assets} onChanged={onChanged} onNotice={onNotice} />
       </section>
 
       <section className="overview-grid lower">
@@ -592,7 +592,7 @@ function GoalProgress({ goal }: { goal: Goal }) {
   );
 }
 
-function AssetTree({ total, baskets, assets, onChanged }: { total: number; baskets: Basket[]; assets: Asset[]; onChanged: () => Promise<void> }) {
+function AssetTree({ total, baskets, assets, onChanged, onNotice }: { total: number; baskets: Basket[]; assets: Asset[]; onChanged: () => Promise<void>; onNotice: (message: string) => void }) {
   const [expanded, setExpanded] = useState<Set<Basket["code"]>>(
     () => new Set(["emergency", "growth", "risk"]),
   );
@@ -659,12 +659,12 @@ function AssetTree({ total, baskets, assets, onChanged }: { total: number; baske
           );
         })}
       </div>
-      {cashBasket && <CashBalanceDialog basket={cashBasket} onClose={() => setCashBasket(null)} onSaved={onChanged} />}
+      {cashBasket && <CashBalanceDialog basket={cashBasket} onClose={() => setCashBasket(null)} onSaved={onChanged} onNotice={onNotice} />}
     </div>
   );
 }
 
-function CashBalanceDialog({ basket, onClose, onSaved }: { basket: Basket; onClose: () => void; onSaved: () => Promise<void> }) {
+function CashBalanceDialog({ basket, onClose, onSaved, onNotice }: { basket: Basket; onClose: () => void; onSaved: () => Promise<void>; onNotice: (message: string) => void }) {
   const [direction, setDirection] = useState<"increase" | "decrease">("increase");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -686,6 +686,7 @@ function CashBalanceDialog({ basket, onClose, onSaved }: { basket: Basket; onClo
         }),
       });
       await onSaved();
+      onNotice(`已${direction === "increase" ? "存入" : "支出"}${money(value, true)}，待购买现金已更新`);
       onClose();
     } catch (error) { setMessage(error instanceof Error ? error.message : "现金变动记录失败"); }
   };
@@ -788,7 +789,7 @@ function GrowthChart({ curve }: { curve: CurvePoint[] }) {
   );
 }
 
-function AssetsView({ data, onChanged }: { data: Dashboard; onChanged: () => Promise<void> }) {
+function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged: () => Promise<void>; onNotice: (message: string) => void }) {
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState<Asset | null>(null);
   const [message, setMessage] = useState("");
@@ -811,6 +812,7 @@ function AssetsView({ data, onChanged }: { data: Dashboard; onChanged: () => Pro
       setShowForm(false);
       setMessage("资产已添加");
       await onChanged();
+      onNotice("资产已添加并保存");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "添加失败");
     }
@@ -831,7 +833,7 @@ function AssetsView({ data, onChanged }: { data: Dashboard; onChanged: () => Pro
           note: form.get("note"),
         }),
       });
-      setSelected(null); setMessage("资产资料与最新估值已更新，变动已写入历史"); await onChanged();
+      setSelected(null); setMessage("资产资料与最新估值已更新，变动已写入历史"); await onChanged(); onNotice("资产修改已保存");
     } catch (error) { setMessage(error instanceof Error ? error.message : "更新失败"); }
   };
 
@@ -843,6 +845,7 @@ function AssetsView({ data, onChanged }: { data: Dashboard; onChanged: () => Pro
       setSelected(null);
       setMessage(`已删除“${selected.name}”，历史记录已保留`);
       await onChanged();
+      onNotice(`已删除“${selected.name}”`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "删除失败"); }
   };
 
@@ -992,7 +995,7 @@ function FieldGuide({ selectedCount, onClose }: { selectedCount: number; onClose
   );
 }
 
-function AutomationView({ assets }: { assets: Asset[] }) {
+function AutomationView({ assets, onNotice }: { assets: Asset[]; onNotice: (message: string) => void }) {
   const [sources, setSources] = useState<DataSourceView[]>([]);
   const [draft, setDraft] = useState<DataSourceView>(freshDataSource);
   const [status, setStatus] = useState("正在读取脚本库…");
@@ -1037,6 +1040,7 @@ function AutomationView({ assets }: { assets: Asset[] }) {
       });
       await reload(response.id);
       setStatus(`已保存，Git 版本 ${response.gitRevision.slice(0, 8)}`);
+      onNotice(`脚本已保存，版本 ${response.gitRevision.slice(0, 8)}`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "保存失败"); }
   };
 
@@ -1049,6 +1053,7 @@ function AutomationView({ assets }: { assets: Asset[] }) {
       });
       await reload(draft.id);
       setStatus(`执行${result.status === "success" ? "成功" : "完成"}，用时 ${result.durationMs} ms`);
+      onNotice(`脚本执行${result.status === "success" ? "成功" : "完成"}`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "执行失败"); }
   };
 
@@ -1059,6 +1064,7 @@ function AutomationView({ assets }: { assets: Asset[] }) {
       await api(`/data-sources/${draft.id}`, { method: "DELETE" });
       await reload();
       setStatus(`已删除“${draft.name || "数据源"}”，历史执行记录已保留。`);
+      onNotice(`已删除“${draft.name || "数据源"}”`);
     } catch (error) { setStatus(error instanceof Error ? error.message : "删除数据源失败"); }
   };
 
@@ -1126,7 +1132,7 @@ function AutomationView({ assets }: { assets: Asset[] }) {
   );
 }
 
-function SettingsView({ data, onChanged }: { data: Dashboard; onChanged: () => Promise<void> }) {
+function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged: () => Promise<void>; onNotice: (message: string) => void }) {
   const emergencyBasket = data.baskets.find((basket) => basket.code === "emergency");
   const [config, setConfig] = useState<PlatformConfig>({
     allocationMode: data.allocation.mode,
@@ -1164,7 +1170,7 @@ function SettingsView({ data, onChanged }: { data: Dashboard; onChanged: () => P
         allocation_mode: config.allocationMode, growth_ratio: config.growthRatio,
         risk_ratio: config.riskRatio, default_contribution_cny: config.defaultContributionCny,
       }) });
-      setConfig(saved); setMessage("流入与配置策略已保存"); await onChanged();
+      setConfig(saved); setMessage("流入与配置策略已保存"); await onChanged(); onNotice("流入与配置策略已保存");
     } catch (error) { setMessage(error instanceof Error ? error.message : "保存失败"); }
   };
 
@@ -1174,7 +1180,7 @@ function SettingsView({ data, onChanged }: { data: Dashboard; onChanged: () => P
         emergency_target_cny: config.emergencyTargetCny,
         calculation_note: config.emergencyCalculationNote,
       }) });
-      setMessage("应急储备金目标与计算备注已保存"); await onChanged();
+      setMessage("应急储备金目标与计算备注已保存"); await onChanged(); onNotice("应急储备金目标已保存");
     } catch (error) { setMessage(error instanceof Error ? error.message : "保存失败"); }
   };
 
@@ -1203,16 +1209,16 @@ function SettingsView({ data, onChanged }: { data: Dashboard; onChanged: () => P
       const saved = await api<{ id: string }>(ruleDraft.id ? `/notification-rules/${ruleDraft.id}` : "/notification-rules", {
         method: ruleDraft.id ? "PATCH" : "POST", body: JSON.stringify(payload),
       });
-      await loadRules(); setRuleDraft((current) => ({ ...current, id: saved.id })); setMessage("外部推送连接已保存");
+      await loadRules(); setRuleDraft((current) => ({ ...current, id: saved.id })); setMessage("外部推送连接已保存"); onNotice("推送规则已保存");
     } catch (error) { setMessage(error instanceof Error ? error.message : "推送设置保存失败"); }
   };
   const toggleRule = async (rule: NotificationRuleView) => {
-    try { await api(`/notification-rules/${rule.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !rule.enabled }) }); await loadRules(); }
+    try { await api(`/notification-rules/${rule.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !rule.enabled }) }); await loadRules(); onNotice(`推送规则已${rule.enabled ? "停用" : "启用"}`); }
     catch (error) { setMessage(error instanceof Error ? error.message : "状态更新失败"); }
   };
   const testRule = async () => {
     if (!ruleDraft.id) { setMessage("请先保存推送连接再测试"); return; }
-    try { const result = await api<{ status: string }>(`/notification-rules/${ruleDraft.id}/test`, { method: "POST" }); setMessage(`测试推送状态：${result.status}`); }
+    try { const result = await api<{ status: string }>(`/notification-rules/${ruleDraft.id}/test`, { method: "POST" }); setMessage(`测试推送状态：${result.status}`); onNotice(`测试推送状态：${result.status}`); }
     catch (error) { setMessage(error instanceof Error ? error.message : "测试推送失败"); }
   };
   const deleteRule = async () => {
@@ -1223,6 +1229,7 @@ function SettingsView({ data, onChanged }: { data: Dashboard; onChanged: () => P
       await loadRules();
       newRule();
       setMessage(`已删除“${ruleDraft.name || "推送规则"}”，历史推送记录已保留。`);
+      onNotice(`已删除“${ruleDraft.name || "推送规则"}”`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "删除推送规则失败"); }
   };
 
