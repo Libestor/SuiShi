@@ -10,8 +10,6 @@
 
 </div>
 
-![岁实资产总览](./docs/images/dashboard-overview.png)
-
 > [!NOTE]
 > 截图中的金额、资产和平台均为匿名演示数据。本项目用于记录与展示，不提供投资建议，也不执行交易。
 
@@ -40,24 +38,7 @@
 | 🏆 里程碑与成就 | 显示距离总资产目标的进度，保留达成时间与奖励展示 |
 | 🔐 两层防护 | 部署层 Nginx Basic Auth + 平台层 HttpOnly 会话，凭证不写入前端代码 |
 
-## 页面预览
-
-### 服务器端安全会话
-
-![岁实安全登录页](./docs/images/secure-login.png)
-
 Token 只用于向后端换取可由服务器撤销的签名会话；前端构建产物、`localStorage` 和 `sessionStorage` 都不保存凭证。
-
-<table>
-  <tr>
-    <td width="50%"><img src="./docs/images/data-source-automation.png" alt="Python 数据源与自动化" /></td>
-    <td width="50%"><img src="./docs/images/platform-settings.png" alt="平台设置与 Webhook" /></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>数据源脚本库</strong></td>
-    <td align="center"><strong>分配、应急储备与外部推送</strong></td>
-  </tr>
-</table>
 
 ## 系统结构
 
