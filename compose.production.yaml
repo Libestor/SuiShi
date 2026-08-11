@@ -100,6 +100,7 @@ services:
     networks:
       edge:
         ipv4_address: ${GATEWAY_IP:-172.31.251.10}
+      ingress:
 
 networks:
   runner_control:
@@ -109,5 +110,8 @@ networks:
     ipam:
       config:
         - subnet: ${EDGE_SUBNET:-172.31.251.0/24}
+  # Only the gateway joins this network. Docker publishes the loopback port
+  # through a non-internal network; the application network remains isolated.
+  ingress:
   backend_egress:
   runner_egress:
