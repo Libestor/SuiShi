@@ -1321,7 +1321,8 @@ function ScheduledInvestmentsView({ assets, onChanged, onNotice }: { assets: Ass
   const selectableSources = sources.filter((source) => !draft.assetId || source.assetIds.length === 0 || source.assetIds.includes(draft.assetId));
   const selectAsset = (assetId: string) => {
     const boundSources = sources.filter((source) => source.assetIds.includes(assetId));
-    setDraft((current) => ({ ...current, assetId, dataSourceId: boundSources.length === 1 ? boundSources[0].id : "" }));
+    const asset = assets.find((item) => item.id === assetId);
+    setDraft((current) => ({ ...current, name: asset?.name ?? "", assetId, dataSourceId: boundSources.length === 1 ? boundSources[0].id : "" }));
   };
   return <div className="page-stack subpage investment-page">
     <section className="subpage-title"><div><p className="section-kicker">自动定投</p><h1>按时记账，报价要新。</h1><p>系统不会代替你向券商下单；它会先执行指定报价脚本，再从对应篮子的待购买金额中记录买入。</p></div></section>
