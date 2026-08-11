@@ -218,6 +218,22 @@ def create_asset(payload: AssetCreate, db: Session = Depends(get_db)) -> Asset:
             source="opening",
         )
     )
+    # 手动新建持仓代表一笔已经存在的资产。它应计入累计本金，但不能再增加
+    # 篮子中的待投资现金，否则总资产会被重复计算。
+    db.add(
+        LedgerEntry(
+            kind="asset_opening",
+            basket_id=basket.id,
+            asset_id=asset.id,
+            amount=asset.value_cny,
+            currency="CNY",
+            units_delta=Decimal("0"),
+            fx_rate=Decimal("1"),
+            occurred_at=now,
+            note="资产首次录入，计入累计本金",
+            metadata_json={"flow": "asset_initial_principal"},
+        )
+    )
     db.add(
         AuditLog(
             entity_type="asset",

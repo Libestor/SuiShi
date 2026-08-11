@@ -68,6 +68,20 @@ def test_asset_and_valuation_flow(client, db, auth_headers) -> None:
     assert create.status_code == 201
     asset_id = create.json()["id"]
     assert Decimal(create.json()["value_cny"]) == Decimal("250")
+    opening_entry = db.scalar(
+        select(LedgerEntry).where(
+            LedgerEntry.asset_id == asset_id,
+            LedgerEntry.kind == "asset_opening",
+        )
+    )
+    assert opening_entry is not None
+    assert opening_entry.amount == Decimal("250")
+    assert opening_entry.basket_id == db.scalar(select(Asset.basket_id).where(Asset.id == asset_id))
+
+    dashboard = client.get("/api/v1/dashboard", headers=auth_headers).json()
+    growth = next(item for item in dashboard["baskets"] if item["code"] == "growth")
+    assert growth["principalCny"] == 250.0
+    assert growth["cashBalanceCny"] == 0.0
 
     update = client.post(
         f"/api/v1/assets/{asset_id}/valuations",

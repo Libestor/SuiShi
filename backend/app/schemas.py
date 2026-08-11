@@ -85,6 +85,7 @@ class AssetSaleCreate(BaseModel):
 class LedgerCreate(BaseModel):
     kind: Literal[
         "opening",
+        "asset_opening",
         "external_deposit",
         "external_withdrawal",
         "basket_transfer",

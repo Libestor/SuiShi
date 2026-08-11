@@ -76,7 +76,7 @@ def calculate_totals(db: Session) -> dict[str, object]:
     principal = ZERO
     for entry in entries:
         principal_delta = ZERO
-        if entry.kind in {"opening", "external_deposit"}:
+        if entry.kind in {"opening", "asset_opening", "external_deposit"}:
             principal_delta = entry.amount * entry.fx_rate
         elif entry.kind == "external_withdrawal":
             principal_delta = -(entry.amount * entry.fx_rate)
