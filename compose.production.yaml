@@ -1,0 +1,113 @@
+name: suishu
+
+# Production topology for a single-host deployment. The host Nginx terminates
+# TLS and performs Basic Auth; this internal gateway is loopback-only.
+services:
+  runner:
+    build:
+      context: ./runner
+    init: true
+    restart: unless-stopped
+    environment:
+      RUNNER_SHARED_SECRET: ${RUNNER_SHARED_SECRET:?set RUNNER_SHARED_SECRET in .env}
+      RUNNER_CACHE_DIR: /runner-cache
+      RUNNER_MAX_TIMEOUT_SECONDS: 60
+      RUNNER_BUILDER_USER: runner-builder
+      RUNNER_EXEC_USER: runner-exec
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+      - /runner-cache:size=512m,mode=0755,nosuid,nodev
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - runner_control
+      - runner_egress
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: sqlite:////app/data/suishu.sqlite3
+      PLATFORM_TOKEN: ${PLATFORM_TOKEN:?set PLATFORM_TOKEN in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
+      SESSION_COOKIE_SECURE: "true"
+      RUNNER_URL: http://runner:9000
+      RUNNER_SHARED_SECRET: ${RUNNER_SHARED_SECRET:?set RUNNER_SHARED_SECRET in .env}
+      TRUSTED_PROXY_CIDRS: ${GATEWAY_IP:-172.31.251.10}/32
+      SNAPSHOT_INTERVAL_MINUTES: ${SNAPSHOT_INTERVAL_MINUTES:-60}
+      SCHEDULER_ENABLED: "true"
+      DATA_SOURCE_REPO: /app/data/data-sources
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    networks:
+      - runner_control
+      - edge
+      - backend_egress
+    depends_on:
+      runner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    networks:
+      - edge
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  gateway:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:80"
+    volumes:
+      - ./nginx/production.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      edge:
+        ipv4_address: ${GATEWAY_IP:-172.31.251.10}
+
+networks:
+  runner_control:
+    internal: true
+  edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.31.251.0/24}
+  backend_egress:
+  runner_egress:

@@ -86,6 +86,7 @@ docker compose up --build
 
 启动后访问 <http://localhost:8080>。默认端口只绑定 `127.0.0.1`；安全关键凭证没有默认值，未按[开发文档](./docs/DEVELOPMENT.md)配置时服务会拒绝启动。
 
+
 ### 本地分服务开发
 
 请参考 [开发文档](./docs/DEVELOPMENT.md)。完整测试：
