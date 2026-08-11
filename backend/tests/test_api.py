@@ -4,6 +4,8 @@ from sqlalchemy import func, select
 
 from app.models import Asset, DataSource, Valuation
 
+from conftest import TEST_PLATFORM_TOKEN
+
 
 def test_api_requires_platform_token(client) -> None:
     response = client.get("/api/v1/assets")
@@ -14,12 +16,14 @@ def test_browser_login_creates_http_only_session_and_logout_revokes_it(client) -
     wrong = client.post("/api/v1/auth/login", json={"token": "wrong-token"})
     assert wrong.status_code == 401
 
-    login = client.post("/api/v1/auth/login", json={"token": "test-token"})
+    login = client.post("/api/v1/auth/login", json={"token": TEST_PLATFORM_TOKEN})
     assert login.status_code == 204
-    cookie = login.headers["set-cookie"]
-    assert "investment_session=" in cookie
-    assert "HttpOnly" in cookie
-    assert "SameSite=strict" in cookie
+    set_cookie = login.headers["set-cookie"]
+    assert "investment_session=" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=strict" in set_cookie
+    captured_cookie = login.cookies.get("investment_session")
+    assert captured_cookie
 
     dashboard = client.get("/api/v1/dashboard")
     assert dashboard.status_code == 200
@@ -28,6 +32,11 @@ def test_browser_login_creates_http_only_session_and_logout_revokes_it(client) -
     logout = client.post("/api/v1/auth/logout")
     assert logout.status_code == 204
     assert client.get("/api/v1/dashboard").status_code == 401
+    replay = client.get(
+        "/api/v1/dashboard",
+        headers={"Cookie": f"investment_session={captured_cookie}"},
+    )
+    assert replay.status_code == 401
 
 
 def test_asset_and_valuation_flow(client, db, auth_headers) -> None:

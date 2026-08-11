@@ -11,8 +11,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 os.environ["DATABASE_URL"] = "sqlite://"
-os.environ["PLATFORM_TOKEN"] = "test-token"
-os.environ["SESSION_SECRET"] = "test-session-secret-that-is-not-public"
+TEST_PLATFORM_TOKEN = "test-platform-token-0123456789abcdef"
+TEST_SESSION_SECRET = "test-session-secret-0123456789abcdef"
+TEST_RUNNER_SECRET = "test-runner-secret-0123456789abcdef"
+
+os.environ["PLATFORM_TOKEN"] = TEST_PLATFORM_TOKEN
+os.environ["SESSION_SECRET"] = TEST_SESSION_SECRET
+os.environ["RUNNER_SHARED_SECRET"] = TEST_RUNNER_SECRET
 os.environ["SCHEDULER_ENABLED"] = "false"
 
 from app.database import Base, get_db  # noqa: E402
@@ -95,4 +100,4 @@ def client(db: Session) -> Generator[TestClient, None, None]:
 
 @pytest.fixture()
 def auth_headers() -> dict[str, str]:
-    return {"X-Platform-Token": "test-token"}
+    return {"X-Platform-Token": TEST_PLATFORM_TOKEN}

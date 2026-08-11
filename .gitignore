@@ -59,6 +59,5 @@ __pycache__/
 /backend/data/
 /runner-cache/
 
-# Self-hosted credentials (the documented development file is intentionally public)
+# Self-hosted credentials
 /nginx/.htpasswd*
-!/nginx/.htpasswd.dev

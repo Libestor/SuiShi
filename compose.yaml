@@ -14,6 +14,8 @@ services:
       - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+    networks:
+      - database
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
@@ -23,13 +25,37 @@ services:
   runner:
     build:
       context: ./runner
+    init: true
     restart: unless-stopped
     environment:
-      RUNNER_SHARED_SECRET: ${RUNNER_SHARED_SECRET:-dev-runner-secret}
+      RUNNER_SHARED_SECRET: ${RUNNER_SHARED_SECRET:?set RUNNER_SHARED_SECRET in .env}
       RUNNER_CACHE_DIR: /runner-cache
       RUNNER_MAX_TIMEOUT_SECONDS: 60
-    volumes:
-      - runner_cache:/runner-cache
+      RUNNER_BUILDER_USER: runner-builder
+      RUNNER_EXEC_USER: runner-exec
+    ports:
+      - "127.0.0.1:${RUNNER_PORT:-9000}:9000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+      - /runner-cache:size=512m,mode=0755,nosuid,nodev
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.0
+    networks:
+      - runner_control
+      - runner_egress
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
       interval: 10s
@@ -42,12 +68,13 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-investment}:${MYSQL_PASSWORD:-investment_dev_password}@mysql:3306/${MYSQL_DATABASE:-investment_overview}?charset=utf8mb4
-      PLATFORM_TOKEN: ${PLATFORM_TOKEN:-dev-investment-token}
-      SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}
+      PLATFORM_TOKEN: ${PLATFORM_TOKEN:?set PLATFORM_TOKEN in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       RUNNER_URL: http://runner:9000
-      RUNNER_SHARED_SECRET: ${RUNNER_SHARED_SECRET:-dev-runner-secret}
+      RUNNER_SHARED_SECRET: ${RUNNER_SHARED_SECRET:?set RUNNER_SHARED_SECRET in .env}
+      TRUSTED_PROXY_CIDRS: ${GATEWAY_IP:-172.31.251.10}/32
       SNAPSHOT_INTERVAL_MINUTES: ${SNAPSHOT_INTERVAL_MINUTES:-60}
       SCHEDULER_ENABLED: "true"
       DATA_SOURCE_REPO: /app/data/data-sources
@@ -57,6 +84,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./backups:/app/backups
+    networks:
+      - database
+      - runner_control
+      - edge
+      - backend_egress
     depends_on:
       mysql:
         condition: service_healthy
@@ -78,6 +110,8 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    networks:
+      - edge
 
   gateway:
     image: nginx:1.29-alpine
@@ -86,13 +120,28 @@ services:
       - "127.0.0.1:${GATEWAY_PORT:-8080}:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - ${BASIC_AUTH_FILE:-./nginx/.htpasswd.dev}:/etc/nginx/.htpasswd:ro
+      - ${BASIC_AUTH_FILE:?set BASIC_AUTH_FILE in .env}:/etc/nginx/.htpasswd:ro
     depends_on:
       backend:
         condition: service_healthy
       frontend:
         condition: service_started
+    networks:
+      edge:
+        ipv4_address: ${GATEWAY_IP:-172.31.251.10}
 
 volumes:
   mysql_data:
-  runner_cache:
+
+networks:
+  database:
+    internal: true
+  runner_control:
+    internal: true
+  edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.31.251.0/24}
+  backend_egress:
+  runner_egress:

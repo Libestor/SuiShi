@@ -16,11 +16,13 @@
 ## 部署基线
 
 - 只向外网暴露开启 HTTPS 和 Basic Auth 的 Nginx 网关。
-- 不直接暴露 Backend、MySQL 或 Python Runner。
-- 更换 `.env.example` 中的所有开发凭证，并使用不同的 `PLATFORM_TOKEN`、`SESSION_SECRET` 和 `RUNNER_SHARED_SECRET`。
+- 不向外部网络直接暴露 Backend、MySQL 或 Python Runner；本机调试端口只绑定回环地址。
+- 为 `PLATFORM_TOKEN`、`SESSION_SECRET` 和 `RUNNER_SHARED_SECRET` 生成不同的高熵随机值；缺失或使用公开示例值时服务必须拒绝启动。
+- 自行生成不纳入版本控制的 Basic Auth 密码文件；仓库不提供活动默认账号。
 - HTTPS 环境设置 `SESSION_COOKIE_SECURE=true`。
 - 将数据库、备份、Webhook Header 和个人数据源脚本保持在 Git 之外。
 - 仅运行自己编写或已审查的 Python 脚本。
+- 保持 Runner 的只读根文件系统、非特权执行身份、资源限额和独立网络不被部署覆盖。
 
 ## 支持范围
 

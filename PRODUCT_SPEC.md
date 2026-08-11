@@ -359,7 +359,7 @@ Header 中的 Token 等敏感值只在通过平台鉴权后的设置页中用于
 - Nginx Basic Auth 作为外层鉴权。
 - 平台自身 Token 作为第二层鉴权；登录页校验成功后换取有限时的 `HttpOnly` 会话。
 - Token 不嵌入前端构建产物，不写入 `localStorage` 或 `sessionStorage`。
-- 登录失败进行服务器端限速，退出登录会立即删除会话 Cookie。
+- 登录失败进行有界的服务器端限速，退出登录会撤销服务器端会话并立即删除 Cookie。
 - 凭证采用服务器密码级别的强度。
 - 当前威胁模型不考虑凭证泄漏。
 - Python 脚本在 Docker 中运行。

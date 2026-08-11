@@ -23,7 +23,13 @@ cp .env.example .env
 - `MYSQL_PASSWORD`
 - `MYSQL_ROOT_PASSWORD`
 
-Compose 网关默认已经开启 Nginx Basic Auth。开发示例账号为 `investment`，密码为 `investment-dev`；它只用于首次本机启动。对外部署前应生成新的 htpasswd 文件，并将 `.env` 中的 `BASIC_AUTH_FILE` 指向该文件。默认所有对外端口都只绑定 `127.0.0.1`。
+仓库不再提供可直接使用的开发凭证。`PLATFORM_TOKEN`、`SESSION_SECRET` 和 `RUNNER_SHARED_SECRET` 必须分别填写至少 32 个字符的不同随机值；缺失、重复或使用公开示例值时，Compose 或服务会拒绝启动。可分别运行三次以下命令生成：
+
+```bash
+openssl rand -hex 32
+```
+
+Compose 网关默认开启 Nginx Basic Auth。请创建不纳入版本控制的 htpasswd 文件，并将 `.env` 中的 `BASIC_AUTH_FILE` 设置为其绝对路径。默认所有对外端口都只绑定 `127.0.0.1`。
 
 `SESSION_SECRET` 用于签署浏览器会话，必须与 `PLATFORM_TOKEN` 不同且足够长。HTTPS 部署必须设置 `SESSION_COOKIE_SECURE=true`。
 
@@ -31,8 +37,10 @@ Compose 网关默认已经开启 Nginx Basic Auth。开发示例账号为 `inves
 
 ```bash
 printf 'your-user:' > /absolute/safe/path/investment.htpasswd
-openssl passwd -apr1 'your-strong-password' >> /absolute/safe/path/investment.htpasswd
+openssl passwd -apr1 >> /absolute/safe/path/investment.htpasswd
 ```
+
+第二条命令会交互式提示输入密码，避免把密码写进 shell 历史。
 
 ## 3. 完整启动
 
@@ -47,6 +55,7 @@ docker compose up --build
 | Web | http://localhost:8080 | 推荐访问入口 |
 | Frontend | http://localhost:3000 | 前端直连 |
 | Backend | http://localhost:8000 | API 与文档 |
+| Runner | http://localhost:9000 | 仅供本机后端调用的脚本执行服务 |
 | MySQL | localhost:3306 | 本地数据库 |
 
 后端首次启动会运行 Alembic 迁移并写入演示数据。后续启动不会重复创建演示记录。
@@ -65,32 +74,27 @@ npm run dev
 
 前端开发服务器会将 `/api` 代理到 `http://localhost:8000`。
 
-### 不等待 Docker 镜像的宿主机模式
+### 后端与前端的宿主机模式
 
-需要立即开发或 Docker Hub 较慢时，可用项目内 SQLite 文件启动同一套 API；正式 Compose 方案仍使用 MySQL。分别打开三个终端：
+可用项目内 SQLite 文件在宿主机启动 API；正式 Compose 方案仍使用 MySQL。Runner 的 UID 隔离、进程回收和资源上限依赖 Linux 容器，因此不再直接在 macOS 宿主机运行。分别打开三个终端：
 
 ```bash
-cd runner
-uv sync
-RUNNER_SHARED_SECRET=dev-runner-secret RUNNER_CACHE_DIR=../data/runner-cache \
-  uv run uvicorn app.main:app --host 127.0.0.1 --port 9000
+docker compose up --build runner
 ```
 
 ```bash
 cd backend
 uv sync --dev
-DATABASE_URL=sqlite:///../data/development.sqlite3 PLATFORM_TOKEN=dev-investment-token SESSION_SECRET=local-dev-session-secret \
-RUNNER_URL=http://127.0.0.1:9000 RUNNER_SHARED_SECRET=dev-runner-secret \
-DATA_SOURCE_REPO=../data/data-sources \
-SCHEDULER_ENABLED=true SNAPSHOT_INTERVAL_MINUTES=60 uv run alembic upgrade head
-DATABASE_URL=sqlite:///../data/development.sqlite3 PLATFORM_TOKEN=dev-investment-token SESSION_SECRET=local-dev-session-secret \
-RUNNER_URL=http://127.0.0.1:9000 RUNNER_SHARED_SECRET=dev-runner-secret \
-DATA_SOURCE_REPO=../data/data-sources \
-SCHEDULER_ENABLED=true SNAPSHOT_INTERVAL_MINUTES=60 uv run python -m app.seed
-DATABASE_URL=sqlite:///../data/development.sqlite3 PLATFORM_TOKEN=dev-investment-token SESSION_SECRET=local-dev-session-secret \
-RUNNER_URL=http://127.0.0.1:9000 RUNNER_SHARED_SECRET=dev-runner-secret \
-DATA_SOURCE_REPO=../data/data-sources \
-SCHEDULER_ENABLED=true SNAPSHOT_INTERVAL_MINUTES=60 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+set -a
+source ../.env
+set +a
+export DATABASE_URL=sqlite:///../data/development.sqlite3
+export RUNNER_URL=http://127.0.0.1:9000
+export DATA_SOURCE_REPO=../data/data-sources
+export SCHEDULER_ENABLED=true
+uv run alembic upgrade head
+uv run python -m app.seed
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 ```bash
@@ -165,7 +169,7 @@ docker compose logs -f backend runner
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/snapshots \
-  -H 'X-Platform-Token: dev-investment-token'
+  -H "X-Platform-Token: ${PLATFORM_TOKEN}"
 ```
 
 保存估值时会同时检查已启用的通用数值和里程碑推送规则。Webhook 响应或失败原因保存在 `notification_deliveries`，敏感 Header 不写入响应日志。

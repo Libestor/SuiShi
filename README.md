@@ -46,7 +46,7 @@
 
 ![岁实安全登录页](./docs/images/secure-login.png)
 
-Token 只用于向后端换取签名会话；前端构建产物、`localStorage` 和 `sessionStorage` 都不保存凭证。
+Token 只用于向后端换取可由服务器撤销的签名会话；前端构建产物、`localStorage` 和 `sessionStorage` 都不保存凭证。
 
 <table>
   <tr>
@@ -80,10 +80,11 @@ flowchart LR
 
 ```bash
 cp .env.example .env
+# 按开发文档生成三项随机密钥和独立的 Basic Auth 密码文件
 docker compose up --build
 ```
 
-启动后访问 <http://localhost:8080>。默认端口只绑定 `127.0.0.1`，默认凭证也只用于本机开发；用于真实资产前，请先修改 `.env` 中的所有凭证。
+启动后访问 <http://localhost:8080>。默认端口只绑定 `127.0.0.1`；安全关键凭证没有默认值，未按[开发文档](./docs/DEVELOPMENT.md)配置时服务会拒绝启动。
 
 ### 本地分服务开发
 
@@ -108,13 +109,13 @@ def fetch(payload):
     return {"items": results}
 ```
 
-数据源运行在独立 Runner 中，依赖由 `uv` 管理。脚本只能更新单价、汇率和 `source_attributes` 中的扩展字段。
+数据源运行在独立 Runner 中，依赖由 `uv` 管理。依赖构建与脚本执行使用不同的非特权身份，并受进程、内存、CPU、文件和输出上限约束；脚本只能通过返回值更新单价、汇率和 `source_attributes` 中的扩展字段。
 
 ## 数据与安全
 
 - 不要将 `.env`、数据库、备份、真实资产导出、Webhook 凭证或个人数据源脚本提交到 Git。
 - 网络部署建议使用 HTTPS，并确保只有 Nginx 对外开放；后端和 Runner 不应直接暴露。
-- 登录会话使用 `HttpOnly` Cookie；平台 Token 不应嵌入浏览器构建产物。
+- 登录会话使用服务器端可撤销的 `HttpOnly` Cookie；平台 Token 不应嵌入浏览器构建产物。
 - 执行任意 Python 代码始终具有风险。请只运行自己编写或已审查的脚本，并将 Runner 与宿主机和业务数据库隔离。
 - 公开源代码不等于公开个人实例。真实数据应当始终保持私有。
 
