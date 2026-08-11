@@ -28,6 +28,7 @@ from app.schemas import (
     AllocationPreviewRequest,
     AssetCreate,
     AssetRead,
+    AssetSaleCreate,
     AssetUpdate,
     BasketUpdate,
     DataSourceCreate,
@@ -301,6 +302,65 @@ def delete_asset(asset_id: str, db: Session = Depends(get_db)) -> None:
         )
     )
     db.commit()
+
+
+@router.post("/assets/{asset_id}/sell", status_code=status.HTTP_201_CREATED)
+def sell_asset_to_pending_cash(
+    asset_id: str, payload: AssetSaleCreate, db: Session = Depends(get_db)
+) -> dict[str, object]:
+    """Move sale proceeds into the source basket's always-available pending cash."""
+
+    asset = _get_active(db, Asset, asset_id)
+    if payload.units > asset.units:
+        raise HTTPException(status_code=422, detail="卖出份额不能超过当前持有份额。")
+
+    occurred_at = payload.occurred_at or datetime.now(timezone.utc)
+    fx_rate = payload.fx_rate or asset.fx_rate
+    proceeds_original = payload.units * payload.unit_price
+    entry = LedgerEntry(
+        kind="sell",
+        basket_id=asset.basket_id,
+        asset_id=asset.id,
+        amount=proceeds_original,
+        currency=asset.currency,
+        units_delta=-payload.units,
+        unit_price=payload.unit_price,
+        fx_rate=fx_rate,
+        occurred_at=occurred_at,
+        note=payload.note or "卖出资产，转入待投资资产",
+        metadata_json={"flow": "asset_to_pending_cash"},
+    )
+    db.add(entry)
+    db.flush()
+    _apply_ledger_effect(db, entry, Decimal("1"))
+    remaining_units = asset.units
+    is_liquidated = remaining_units == Decimal("0")
+    if is_liquidated:
+        asset.deleted_at = occurred_at
+        db.add(
+            AuditLog(
+                entity_type="asset",
+                entity_id=asset.id,
+                action="liquidated",
+                before_json={"units": str(payload.units), "deleted_at": None},
+                after_json={"units": "0", "deleted_at": occurred_at.isoformat()},
+            )
+        )
+    db.add(
+        AuditLog(
+            entity_type="ledger_entry",
+            entity_id=entry.id,
+            action="create",
+            after_json=_json_safe(_ledger_payload(entry)),
+        )
+    )
+    db.commit()
+    return {
+        "id": entry.id,
+        "proceedsCny": float(proceeds_original * fx_rate),
+        "remainingUnits": float(remaining_units),
+        "assetLiquidated": is_liquidated,
+    }
 
 
 @router.post("/assets/{asset_id}/valuations", status_code=status.HTTP_201_CREATED)

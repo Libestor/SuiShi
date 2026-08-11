@@ -72,6 +72,16 @@ class ValuationCreate(BaseModel):
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class AssetSaleCreate(BaseModel):
+    """Record a partial sale or full liquidation into the basket's pending cash."""
+
+    units: Decimal = Field(gt=0)
+    unit_price: Decimal = Field(gt=0)
+    fx_rate: Decimal | None = Field(default=None, gt=0)
+    occurred_at: datetime | None = None
+    note: str = ""
+
+
 class LedgerCreate(BaseModel):
     kind: Literal[
         "opening",

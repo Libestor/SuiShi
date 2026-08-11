@@ -215,6 +215,9 @@ class PortfolioSnapshot(RecordMixin, Base):
     principal_cny: Mapped[Decimal] = mapped_column(Numeric(20, 4))
     profit_cny: Mapped[Decimal] = mapped_column(Numeric(20, 4))
     basket_values: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    basket_principals: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, default=dict, nullable=True
+    )
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     source: Mapped[str] = mapped_column(String(40), default="scheduler")
 

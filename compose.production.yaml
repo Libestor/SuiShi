@@ -57,6 +57,7 @@ services:
       # client identity, so untrusted X-Forwarded-For values are ignored.
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
       SNAPSHOT_INTERVAL_MINUTES: ${SNAPSHOT_INTERVAL_MINUTES:-60}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       SCHEDULER_ENABLED: "true"
       DATA_SOURCE_REPO: /app/data/data-sources
       TZ: Asia/Shanghai

@@ -40,6 +40,8 @@ test("starter preview is removed and product management views are present", asyn
   assert.match(dashboardClient, /平台设置/);
   assert.match(dashboardClient, /数据源与自动化/);
   assert.match(dashboardClient, /保存全部修改/);
+  assert.match(dashboardClient, /逐月比较累计本金与当前金额/);
+  assert.match(dashboardClient, /各篮子累计盈亏/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
 });

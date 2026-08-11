@@ -92,6 +92,9 @@ export DATABASE_URL=sqlite:///../data/development.sqlite3
 export RUNNER_URL=http://127.0.0.1:9000
 export DATA_SOURCE_REPO=../data/data-sources
 export SCHEDULER_ENABLED=true
+# Real databases remain empty apart from the three fixed baskets. Use true only
+# with a disposable local database when you explicitly need demonstration data.
+export SEED_DEMO_DATA=false
 uv run alembic upgrade head
 uv run python -m app.seed
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000

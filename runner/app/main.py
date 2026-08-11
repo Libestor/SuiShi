@@ -222,7 +222,7 @@ def python_for_packages(packages: list[str]) -> Path:
         )
         try:
             create = _run_sandboxed(
-                ["uv", "venv", str(staging)],
+                ["uv", "venv", "--clear", str(staging)],
                 user=RUNNER_BUILDER_USER,
                 limits=limits,
                 timeout=60,

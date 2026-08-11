@@ -82,6 +82,13 @@ def execute_data_source(
             },
             timeout=60,
         )
+        if response.is_error:
+            try:
+                runner_error = response.json().get("detail")
+            except ValueError:
+                runner_error = None
+            if runner_error:
+                raise RuntimeError(f"Runner 执行失败：{runner_error}")
         response.raise_for_status()
         runner_result = response.json()
         output_payload = runner_result["result"]

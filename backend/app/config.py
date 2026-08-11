@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     snapshot_interval_minutes: int = 60
     data_source_repo: str = "./data/data-sources"
     scheduler_enabled: bool = False
+    # Sample holdings and historical transactions must be an explicit local-demo choice.
+    seed_demo_data: bool = False
 
     @model_validator(mode="after")
     def validate_security_credentials(self) -> "Settings":

@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import func, select
 
+from app.config import get_settings
 from app.database import SessionLocal
 from app.models import (
     Asset,
@@ -34,7 +35,7 @@ def seed() -> None:
             color="#718b6b",
             icon="shield",
             target_ratio=Decimal("0"),
-            cash_balance_cny=Decimal("12000"),
+            cash_balance_cny=Decimal("0"),
             emergency_target_cny=Decimal("60000"),
             calculation_note="房租、伙食、水电等必要支出约 1 万元/月，保留 6 个月。",
         )
@@ -45,7 +46,7 @@ def seed() -> None:
             color="#bf7b53",
             icon="sprout",
             target_ratio=Decimal("0.8"),
-            cash_balance_cny=Decimal("6400"),
+            cash_balance_cny=Decimal("0"),
         )
         risk = Basket(
             code="risk",
@@ -54,10 +55,26 @@ def seed() -> None:
             color="#8b6570",
             icon="flame",
             target_ratio=Decimal("0.2"),
-            cash_balance_cny=Decimal("2200"),
+            cash_balance_cny=Decimal("0"),
         )
         db.add_all([emergency, growth, risk])
         db.flush()
+
+        if not get_settings().seed_demo_data:
+            # A fresh real installation starts with the fixed baskets only.
+            # Demonstration holdings, fictitious cash, and backdated ledger entries
+            # are opt-in because they otherwise become indistinguishable from data
+            # entered by the owner.
+            db.add(
+                PlatformSettings(
+                    allocation_mode="dynamic",
+                    growth_ratio=Decimal("0.8"),
+                    risk_ratio=Decimal("0.2"),
+                    default_contribution_cny=Decimal("12000"),
+                )
+            )
+            db.commit()
+            return
 
         now = datetime.now(timezone.utc)
         assets = [
@@ -260,28 +277,22 @@ def seed() -> None:
             db.rollback()
 
         totals = calculate_totals(db)
-        final_total = totals["total"]
-        final_principal = totals["principal"]
-        points = [
-            (180, Decimal("188000"), Decimal("188000")),
-            (150, Decimal("192400"), Decimal("188000")),
-            (120, Decimal("199800"), Decimal("188000")),
-            (90, Decimal("207600"), Decimal("188000")),
-            (60, Decimal("218900"), Decimal("200000")),
-            (30, Decimal("226300"), Decimal("212000")),
-            (0, final_total, final_principal),
-        ]
-        for days_ago, total, principal in points:
-            db.add(
-                PortfolioSnapshot(
-                    total_asset_cny=total,
-                    principal_cny=principal,
-                    profit_cny=total - principal,
-                    basket_values={},
-                    observed_at=now - timedelta(days=days_ago),
-                    source="seed" if days_ago else "opening",
-                )
+        db.add(
+            PortfolioSnapshot(
+                total_asset_cny=totals["total"],
+                principal_cny=totals["principal"],
+                profit_cny=totals["profit"],
+                basket_values={
+                    key: float(value) for key, value in totals["basket_values"].items()
+                },
+                basket_principals={
+                    key: float(value)
+                    for key, value in totals["basket_principals"].items()
+                },
+                observed_at=now,
+                source="opening",
             )
+        )
         db.commit()
 
 

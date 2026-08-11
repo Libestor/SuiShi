@@ -1,8 +1,18 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import func, select
 
-from app.models import Asset, DataSource, NotificationRule, Valuation
+from app.models import (
+    Asset,
+    Basket,
+    DataSource,
+    LedgerEntry,
+    NotificationRule,
+    PortfolioSnapshot,
+    Valuation,
+)
+from app.services import datasources
 
 from conftest import TEST_PLATFORM_TOKEN
 
@@ -72,6 +82,52 @@ def test_asset_and_valuation_flow(client, db, auth_headers) -> None:
     assert db.scalar(select(Asset.deleted_at).where(Asset.id == asset_id)) is not None
 
 
+def test_selling_asset_moves_proceeds_to_pending_cash_and_can_liquidate(
+    client, db, auth_headers
+) -> None:
+    asset = db.scalar(select(Asset).where(Asset.name == "风险资产"))
+    risk = db.scalar(select(Basket).where(Basket.code == "risk"))
+    assert asset is not None
+    assert risk is not None
+
+    partial = client.post(
+        f"/api/v1/assets/{asset.id}/sell",
+        headers=auth_headers,
+        json={"units": "0.25", "unit_price": "20000", "note": "调仓到待投资资产"},
+    )
+    assert partial.status_code == 201
+    assert partial.json() == {
+        "id": partial.json()["id"],
+        "proceedsCny": 5000.0,
+        "remainingUnits": 0.75,
+        "assetLiquidated": False,
+    }
+    assert asset.units == Decimal("0.75")
+    assert risk.cash_balance_cny == Decimal("105000")
+
+    full = client.post(
+        f"/api/v1/assets/{asset.id}/sell",
+        headers=auth_headers,
+        json={"units": "0.75", "unit_price": "20000"},
+    )
+    assert full.status_code == 201
+    assert full.json()["assetLiquidated"] is True
+    assert risk.cash_balance_cny == Decimal("120000")
+    assert asset.deleted_at is not None
+    assert db.scalar(select(func.count(LedgerEntry.id)).where(LedgerEntry.kind == "sell")) == 2
+
+
+def test_sale_rejects_units_above_current_holding(client, db, auth_headers) -> None:
+    asset = db.scalar(select(Asset).where(Asset.name == "风险资产"))
+    response = client.post(
+        f"/api/v1/assets/{asset.id}/sell",
+        headers=auth_headers,
+        json={"units": "1.01", "unit_price": "20000"},
+    )
+    assert response.status_code == 422
+    assert asset.units == Decimal("1")
+
+
 def test_allocation_preview_uses_current_basket_values(client, auth_headers) -> None:
     response = client.post(
         "/api/v1/allocations/preview",
@@ -96,6 +152,88 @@ def test_pending_cash_does_not_change_invested_risk_ratio(client, auth_headers) 
     allocation = response.json()["allocation"]
     assert allocation["growthRatio"] == 80.0
     assert allocation["riskRatio"] == 20.0
+
+
+def test_dashboard_reports_principal_and_profit_for_each_basket(
+    client, db, auth_headers
+) -> None:
+    baskets = {item.code: item for item in db.scalars(select(Basket))}
+    db.add_all(
+        [
+            LedgerEntry(
+                kind="opening",
+                basket_id=baskets["emergency"].id,
+                amount=Decimal("50000"),
+                occurred_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            ),
+            LedgerEntry(
+                kind="opening",
+                basket_id=baskets["growth"].id,
+                amount=Decimal("70000"),
+                occurred_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            ),
+            LedgerEntry(
+                kind="opening",
+                basket_id=baskets["risk"].id,
+                amount=Decimal("125000"),
+                occurred_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db.commit()
+
+    dashboard = client.get("/api/v1/dashboard", headers=auth_headers).json()
+    by_code = {item["code"]: item for item in dashboard["baskets"]}
+
+    assert by_code["emergency"]["principalCny"] == 50000.0
+    assert by_code["emergency"]["profitCny"] == 0.0
+    assert by_code["growth"]["principalCny"] == 70000.0
+    assert by_code["growth"]["profitCny"] == 10000.0
+    assert by_code["risk"]["principalCny"] == 125000.0
+    assert by_code["risk"]["profitCny"] == -5000.0
+
+
+def test_dashboard_curve_keeps_last_snapshot_for_each_month(client, db, auth_headers) -> None:
+    snapshots = [
+        PortfolioSnapshot(
+            total_asset_cny=Decimal("100"),
+            principal_cny=Decimal("90"),
+            profit_cny=Decimal("10"),
+            basket_values={"growth": 100},
+            basket_principals={"growth": 90},
+            observed_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            source="test",
+        ),
+        PortfolioSnapshot(
+            total_asset_cny=Decimal("120"),
+            principal_cny=Decimal("100"),
+            profit_cny=Decimal("20"),
+            basket_values={"growth": 120},
+            basket_principals={"growth": 100},
+            observed_at=datetime(2026, 7, 31, 15, tzinfo=timezone.utc),
+            source="test",
+        ),
+        PortfolioSnapshot(
+            total_asset_cny=Decimal("150"),
+            principal_cny=Decimal("125"),
+            profit_cny=Decimal("25"),
+            basket_values={"growth": 150},
+            basket_principals={"growth": 125},
+            observed_at=datetime(2026, 8, 11, tzinfo=timezone.utc),
+            source="test",
+        ),
+    ]
+    db.add_all(snapshots)
+    db.commit()
+
+    curve = client.get("/api/v1/dashboard", headers=auth_headers).json()["curve"]
+
+    assert [point["month"] for point in curve] == ["2026-07", "2026-08"]
+    assert curve[0]["total"] == 120.0
+    assert curve[1]["netContribution"] == 25.0
+    assert curve[1]["valueChange"] == 30.0
+    assert curve[1]["baskets"]["growth"]["profit"] == 25.0
+    assert curve[1]["baskets"]["growth"]["profitRatio"] == 20.0
 
 
 def test_emergency_target_can_be_saved_with_calculation_note(client, auth_headers) -> None:
@@ -174,6 +312,43 @@ def test_data_source_can_bind_assets_and_update_mapping(client, db, auth_headers
     saved = next(item for item in listed if item["id"] == source.id)
     assert saved["assetIds"] == [assets[0].id]
     assert saved["inputMapping"] == {"fund_code": "symbol"}
+
+
+def test_data_source_surfaces_runner_validation_detail(
+    client, db, auth_headers, monkeypatch
+) -> None:
+    source = DataSource(
+        name="错误详情测试",
+        code="def fetch(payload): return {}",
+        input_mapping={},
+        output_mapping={},
+        asset_ids=[],
+        packages=["httpx"],
+    )
+    db.add(source)
+    db.commit()
+
+    class RunnerResponse:
+        is_error = True
+
+        def json(self):
+            return {"detail": "Failed to create virtual environment"}
+
+        def raise_for_status(self):
+            raise AssertionError("structured Runner errors should be handled first")
+
+    monkeypatch.setattr(datasources.httpx, "post", lambda *args, **kwargs: RunnerResponse())
+
+    response = client.post(
+        f"/api/v1/data-sources/{source.id}/execute",
+        headers=auth_headers,
+        json={},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Runner 执行失败：Failed to create virtual environment"
+    )
 
 
 def test_data_source_and_notification_rule_can_be_deleted(client, db, auth_headers) -> None:

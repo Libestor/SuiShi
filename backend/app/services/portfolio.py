@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -12,6 +13,7 @@ from app.services.settings import get_platform_settings
 
 
 ZERO = Decimal("0")
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def active_baskets(db: Session) -> list[Basket]:
@@ -64,6 +66,8 @@ def calculate_totals(db: Session) -> dict[str, object]:
         basket_values[basket.code] = asset_total + basket.cash_balance_cny
 
     total = sum(basket_values.values(), ZERO)
+    basket_ids = {basket.id: basket.code for basket in baskets}
+    basket_principals = {basket.code: ZERO for basket in baskets}
     entries = db.scalars(
         select(LedgerEntry).where(
             LedgerEntry.deleted_at.is_(None), LedgerEntry.status == "confirmed"
@@ -71,16 +75,22 @@ def calculate_totals(db: Session) -> dict[str, object]:
     )
     principal = ZERO
     for entry in entries:
+        principal_delta = ZERO
         if entry.kind in {"opening", "external_deposit"}:
-            principal += entry.amount * entry.fx_rate
+            principal_delta = entry.amount * entry.fx_rate
         elif entry.kind == "external_withdrawal":
-            principal -= entry.amount * entry.fx_rate
+            principal_delta = -(entry.amount * entry.fx_rate)
+        principal += principal_delta
+        basket_code = basket_ids.get(entry.basket_id or "")
+        if basket_code:
+            basket_principals[basket_code] += principal_delta
 
     return {
         "total": total,
         "principal": principal,
         "profit": total - principal,
         "basket_values": basket_values,
+        "basket_principals": basket_principals,
         "basket_asset_values": basket_asset_values,
         "baskets": baskets,
         "assets": assets,
@@ -91,12 +101,16 @@ def save_portfolio_snapshot(db: Session, source: str = "manual") -> PortfolioSna
     totals = calculate_totals(db)
     observed_at = datetime.now(timezone.utc)
     basket_values = {key: float(value) for key, value in totals["basket_values"].items()}
+    basket_principals = {
+        key: float(value) for key, value in totals["basket_principals"].items()
+    }
 
     snapshot = PortfolioSnapshot(
         total_asset_cny=totals["total"],
         principal_cny=totals["principal"],
         profit_cny=totals["profit"],
         basket_values=basket_values,
+        basket_principals=basket_principals,
         observed_at=observed_at,
         source=source,
     )
@@ -127,6 +141,7 @@ def save_portfolio_snapshot(db: Session, source: str = "manual") -> PortfolioSna
                 "totalAssetCny": float(totals["total"]),
                 "principalCny": float(totals["principal"]),
                 "basketValues": basket_values,
+                "basketPrincipals": basket_principals,
             }
 
     db.commit()
@@ -139,12 +154,22 @@ def dashboard_payload(db: Session) -> dict[str, object]:
     platform_settings = get_platform_settings(db)
     total = totals["total"]
     basket_values: dict[str, Decimal] = totals["basket_values"]
+    basket_principals: dict[str, Decimal] = totals["basket_principals"]
     basket_asset_values: dict[str, Decimal] = totals["basket_asset_values"]
     baskets: list[Basket] = totals["baskets"]
 
     basket_payload = []
     for basket in baskets:
         value = basket_values.get(basket.code, ZERO)
+        principal = basket_principals.get(basket.code, ZERO)
+        profit = value - principal
+        active_assets = [asset for asset in basket.assets if asset.deleted_at is None]
+        oldest_price_at = min(
+            (asset.price_updated_at for asset in active_assets), default=None
+        )
+        stale_asset_count = sum(
+            1 for asset in active_assets if freshness_label(asset.price_updated_at)[1] >= 24
+        )
         basket_payload.append(
             {
                 "id": basket.id,
@@ -154,10 +179,17 @@ def dashboard_payload(db: Session) -> dict[str, object]:
                 "color": basket.color,
                 "icon": basket.icon,
                 "valueCny": float(value),
+                "principalCny": float(principal),
+                "profitCny": float(profit),
+                "profitRatio": float(profit / principal * 100) if principal else 0,
                 "investedValueCny": float(basket_asset_values.get(basket.code, ZERO)),
                 "ratio": float(value / total * 100) if total else 0,
                 "targetRatio": float(basket.target_ratio * 100),
                 "cashBalanceCny": float(basket.cash_balance_cny),
+                "oldestPriceUpdatedAt": (
+                    oldest_price_at.isoformat() if oldest_price_at else None
+                ),
+                "staleAssetCount": stale_asset_count,
                 "emergencyTargetCny": (
                     float(basket.emergency_target_cny) if basket.emergency_target_cny else None
                 ),
@@ -186,20 +218,74 @@ def dashboard_payload(db: Session) -> dict[str, object]:
         db.scalars(
             select(PortfolioSnapshot)
             .where(PortfolioSnapshot.deleted_at.is_(None))
-            .order_by(PortfolioSnapshot.observed_at.desc())
-            .limit(48)
+            .order_by(PortfolioSnapshot.observed_at.asc())
         )
     )
-    snapshots.reverse()
-    curve = [
-        {
-            "at": row.observed_at.isoformat(),
-            "total": float(row.total_asset_cny),
-            "principal": float(row.principal_cny),
-            "profit": float(row.profit_cny),
-        }
-        for row in snapshots
-    ]
+    monthly_snapshots: dict[str, PortfolioSnapshot] = {}
+    for snapshot in snapshots:
+        observed_at = snapshot.observed_at
+        if observed_at.tzinfo is None:
+            observed_at = observed_at.replace(tzinfo=timezone.utc)
+        month_key = observed_at.astimezone(SHANGHAI_TZ).strftime("%Y-%m")
+        monthly_snapshots[month_key] = snapshot
+
+    curve = []
+    previous_total: Decimal | None = None
+    previous_principal: Decimal | None = None
+    previous_baskets: dict[str, dict[str, float]] = {}
+    for month_key, row in monthly_snapshots.items():
+        point_baskets: dict[str, dict[str, float]] = {}
+        row_basket_values = row.basket_values or {}
+        row_basket_principals = row.basket_principals or {}
+        for basket_code, raw_value in row_basket_values.items():
+            if basket_code not in row_basket_principals:
+                continue
+            value = Decimal(str(raw_value))
+            principal = Decimal(str(row_basket_principals[basket_code]))
+            profit = value - principal
+            previous = previous_baskets.get(basket_code)
+            point_baskets[basket_code] = {
+                "total": float(value),
+                "principal": float(principal),
+                "profit": float(profit),
+                "profitRatio": float(profit / principal * 100) if principal else 0,
+                "netContribution": (
+                    float(principal - Decimal(str(previous["principal"])))
+                    if previous
+                    else 0
+                ),
+                "valueChange": (
+                    float(value - Decimal(str(previous["total"]))) if previous else 0
+                ),
+            }
+        curve.append(
+            {
+                "month": month_key,
+                "at": row.observed_at.isoformat(),
+                "total": float(row.total_asset_cny),
+                "principal": float(row.principal_cny),
+                "profit": float(row.profit_cny),
+                "profitRatio": (
+                    float(row.profit_cny / row.principal_cny * 100)
+                    if row.principal_cny
+                    else 0
+                ),
+                "netContribution": (
+                    float(row.principal_cny - previous_principal)
+                    if previous_principal is not None
+                    else 0
+                ),
+                "valueChange": (
+                    float(row.total_asset_cny - previous_total)
+                    if previous_total is not None
+                    else 0
+                ),
+                "baskets": point_baskets,
+            }
+        )
+        previous_total = row.total_asset_cny
+        previous_principal = row.principal_cny
+        previous_baskets = point_baskets
 
     goals = list(
         db.scalars(

@@ -11,9 +11,14 @@ type Basket = {
   description: string;
   color: string;
   valueCny: number;
+  principalCny: number;
+  profitCny: number;
+  profitRatio: number;
   ratio: number;
   targetRatio: number;
   cashBalanceCny: number;
+  oldestPriceUpdatedAt: string | null;
+  staleAssetCount: number;
   emergencyTargetCny: number | null;
   calculationNote?: string;
 };
@@ -50,7 +55,20 @@ type Goal = {
   achievedAt: string | null;
 };
 
-type CurvePoint = { at: string; total: number; principal: number; profit: number };
+type CurveSeries = {
+  total: number;
+  principal: number;
+  profit: number;
+  profitRatio: number;
+  netContribution: number;
+  valueChange: number;
+};
+
+type CurvePoint = CurveSeries & {
+  month: string;
+  at: string;
+  baskets: Partial<Record<Basket["code"], CurveSeries>>;
+};
 
 type Dashboard = {
   asOf: string;
@@ -162,9 +180,14 @@ const DEMO: Dashboard = {
       description: "六个月必要支出，优先补足",
       color: "#718b6b",
       valueCny: 60000,
+      principalCny: 60000,
+      profitCny: 0,
+      profitRatio: 0,
       ratio: 26.01,
       targetRatio: 0,
       cashBalanceCny: 12000,
+      oldestPriceUpdatedAt: new Date(now.getTime() - 3 * 3600000).toISOString(),
+      staleAssetCount: 0,
       emergencyTargetCny: 60000,
     },
     {
@@ -174,9 +197,14 @@ const DEMO: Dashboard = {
       description: "长期指数与基金投资",
       color: "#bf7b53",
       valueCny: 118873,
+      principalCny: 117000,
+      profitCny: 1873,
+      profitRatio: 1.6,
       ratio: 51.54,
       targetRatio: 80,
       cashBalanceCny: 6400,
+      oldestPriceUpdatedAt: new Date(now.getTime() - 8 * 3600000).toISOString(),
+      staleAssetCount: 0,
       emergencyTargetCny: null,
     },
     {
@@ -186,9 +214,14 @@ const DEMO: Dashboard = {
       description: "严格控制比例的高波动资产",
       color: "#8b6570",
       valueCny: 51771,
+      principalCny: 35000,
+      profitCny: 16771,
+      profitRatio: 47.92,
       ratio: 22.45,
       targetRatio: 20,
       cashBalanceCny: 2200,
+      oldestPriceUpdatedAt: new Date(now.getTime() - 72 * 3600000).toISOString(),
+      staleAssetCount: 1,
       emergencyTargetCny: null,
     },
   ],
@@ -297,15 +330,21 @@ const DEMO: Dashboard = {
       note: "",
     },
   ],
-  curve: [
-    { at: "2026-02-10", total: 188000, principal: 188000, profit: 0 },
-    { at: "2026-03-10", total: 192400, principal: 188000, profit: 4400 },
-    { at: "2026-04-10", total: 199800, principal: 188000, profit: 11800 },
-    { at: "2026-05-10", total: 207600, principal: 188000, profit: 19600 },
-    { at: "2026-06-10", total: 218900, principal: 200000, profit: 18900 },
-    { at: "2026-07-10", total: 226300, principal: 212000, profit: 14300 },
-    { at: "2026-08-10", total: 230644, principal: 212000, profit: 18644 },
-  ],
+  curve: [{
+    month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+    at: now.toISOString(),
+    total: 230644,
+    principal: 212000,
+    profit: 18644,
+    profitRatio: 8.79,
+    netContribution: 0,
+    valueChange: 0,
+    baskets: {
+      emergency: { total: 60000, principal: 60000, profit: 0, profitRatio: 0, netContribution: 0, valueChange: 0 },
+      growth: { total: 118873, principal: 117000, profit: 1873, profitRatio: 1.6, netContribution: 0, valueChange: 0 },
+      risk: { total: 51771, principal: 35000, profit: 16771, profitRatio: 47.92, netContribution: 0, valueChange: 0 },
+    },
+  }],
   goals: [
     {
       id: "goal-300k",
@@ -579,14 +618,16 @@ function Overview({ data, onChanged, onNotice }: { data: Dashboard; onChanged: (
 
       <section className="overview-grid lower">
         <div className="panel chart-panel">
-          <PanelHeading title="生长曲线" subtitle="本金与市场共同托举资产" action="近 6 个月" />
-          <GrowthChart curve={data.curve} />
+          <PanelHeading title="生长曲线" subtitle="逐月比较累计本金与当前金额" action="月末固定 · 当月滚动" />
+          <GrowthChart curve={data.curve} baskets={data.baskets} />
         </div>
         <div className="panel allocation-panel">
           <PanelHeading title="配置罗盘" subtitle="成长与高风险篮子" action="动态平衡" />
           <AllocationCompass data={data} />
         </div>
       </section>
+
+      <BasketPerformanceCards baskets={data.baskets} curve={data.curve} />
 
       <section className="panel freshness-panel full-width">
         <PanelHeading title="数据状态" subtitle="最后一次已知数据始终参与计算" action={`${staleAssets.length} 项待关注`} />
@@ -664,10 +705,10 @@ function AssetTree({ total, baskets, assets, onChanged, onNotice }: { total: num
               value: asset.valueCny,
               kind: "product",
             })),
-            ...(basket.cashBalanceCny > 0 ? [{
-              id: `${basket.id}-cash`, name: "待购买现金", meta: "已归属篮子 · 暂未投入产品",
+            {
+              id: `${basket.id}-cash`, name: "待投资资产", meta: "常驻现金仓位 · 可手动加钱或接收卖出资金",
               value: basket.cashBalanceCny, kind: "cash",
-            }] : []),
+            },
           ];
           return (
             <div className={`basket-column ${basket.code}`} key={basket.id}>
@@ -681,7 +722,7 @@ function AssetTree({ total, baskets, assets, onChanged, onNotice }: { total: num
                   {entries.map((entry) => entry.kind === "cash" ? (
                     <button className="product-node cash cash-edit-trigger" type="button" key={entry.id} onClick={() => setCashBasket(basket)}>
                       <span className="product-mark">现</span>
-                      <span className="product-copy"><strong>{entry.name}</strong><small>点击记录存入或支出</small></span>
+                      <span className="product-copy"><strong>{entry.name}</strong><small>点击手动加钱、支出或查看调仓流入</small></span>
                       <span className="product-value"><strong>{money(entry.value, true)}</strong><small>{percent(basket.valueCny ? entry.value / basket.valueCny * 100 : 0)} 篮内</small></span>
                     </button>
                   ) : (
@@ -711,7 +752,7 @@ function CashBalanceDialog({ basket, onClose, onSaved, onNotice }: { basket: Bas
     event.preventDefault();
     const value = Number(amount);
     if (!Number.isFinite(value) || value <= 0) { setMessage("请输入大于 0 的金额。"); return; }
-    if (direction === "decrease" && value > basket.cashBalanceCny) { setMessage("支出金额不能超过当前待购买现金。"); return; }
+    if (direction === "decrease" && value > basket.cashBalanceCny) { setMessage("支出金额不能超过当前待投资资产。"); return; }
     try {
       await api("/ledger", {
         method: "POST",
@@ -720,23 +761,23 @@ function CashBalanceDialog({ basket, onClose, onSaved, onNotice }: { basket: Bas
           basket_id: basket.id,
           amount: String(value),
           currency: "CNY",
-          note: note.trim() || (direction === "increase" ? "补充待购买现金" : "从待购买现金支出"),
+          note: note.trim() || (direction === "increase" ? "手动补充待投资资产" : "从待投资资产支出"),
         }),
       });
       await onSaved();
-      onNotice(`已${direction === "increase" ? "存入" : "支出"}${money(value, true)}，待购买现金已更新`);
+      onNotice(`已${direction === "increase" ? "存入" : "支出"}${money(value, true)}，待投资资产已更新`);
       onClose();
     } catch (error) { setMessage(error instanceof Error ? error.message : "现金变动记录失败"); }
   };
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="cash-balance-title">
-      <button className="modal-dismiss" type="button" aria-label="关闭待购买现金编辑窗口" onClick={onClose} />
+      <button className="modal-dismiss" type="button" aria-label="关闭待投资资产编辑窗口" onClick={onClose} />
       <form className="modal-card cash-balance-modal" onSubmit={submit}>
-        <div className="modal-heading"><div><p className="section-kicker">{basket.name}</p><h2 id="cash-balance-title">待购买现金</h2></div><span>每次修改都会保留一笔资金流水</span></div>
+        <div className="modal-heading"><div><p className="section-kicker">{basket.name}</p><h2 id="cash-balance-title">待投资资产</h2></div><span>常驻现金仓位；手动加钱和调仓流入都会保留流水</span></div>
         <p className="cash-balance-current">当前可用 <strong>{money(basket.cashBalanceCny, true)}</strong></p>
         <div className="cash-direction" aria-label="现金变动方式">
-          <button type="button" className={direction === "increase" ? "active" : ""} onClick={() => setDirection("increase")}><strong>存入现金</strong><span>增加本金与本篮子现金</span></button>
-          <button type="button" className={direction === "decrease" ? "active" : ""} onClick={() => setDirection("decrease")}><strong>支出现金</strong><span>减少本金与本篮子现金</span></button>
+          <button type="button" className={direction === "increase" ? "active" : ""} onClick={() => setDirection("increase")}><strong>手动加钱</strong><span>增加本金与本篮子待投资资产</span></button>
+          <button type="button" className={direction === "decrease" ? "active" : ""} onClick={() => setDirection("decrease")}><strong>从现金支出</strong><span>减少本金与本篮子待投资资产</span></button>
         </div>
         <label>本次{direction === "increase" ? "存入" : "支出"}金额（元）<input type="number" min="0.01" max={direction === "decrease" ? basket.cashBalanceCny : undefined} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="例如：5000" /></label>
         <label>备注（可选）<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder={direction === "increase" ? "例如：本月待投资资金" : "例如：购买资产前转出"} /></label>
@@ -800,36 +841,183 @@ function AllocationCompass({ data }: { data: Dashboard }) {
   );
 }
 
-function GrowthChart({ curve }: { curve: CurvePoint[] }) {
-  const values = curve.length ? curve : DEMO.curve;
-  const min = Math.min(...values.map((point) => point.principal)) * 0.96;
-  const max = Math.max(...values.map((point) => point.total)) * 1.02;
-  const range = Math.max(1, max - min);
-  const polygon = (key: "total" | "principal") => {
-    const points = values.map((point, index) => {
-      const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
-      const y = 100 - ((point[key] - min) / range) * 100;
-      return `${x}% ${y}%`;
-    });
-    return `polygon(0% 100%, ${points.join(", ")}, 100% 100%)`;
-  };
+type CurveScope = "all" | Basket["code"];
+type CurveRange = "6m" | "1y" | "3y" | "all";
+
+const CURVE_RANGES: { id: CurveRange; label: string; months: number | null }[] = [
+  { id: "6m", label: "近 6 月", months: 6 },
+  { id: "1y", label: "1 年", months: 12 },
+  { id: "3y", label: "3 年", months: 36 },
+  { id: "all", label: "全部", months: null },
+];
+
+function signedMoney(value: number) {
+  return `${value > 0 ? "+" : ""}${money(value, true)}`;
+}
+
+function monthLabel(month: string, full = false) {
+  const [year, value] = month.split("-");
+  return full ? `${year} 年 ${Number(value)} 月` : `${Number(value)}月`;
+}
+
+function GrowthChart({ curve, baskets }: { curve: CurvePoint[]; baskets: Basket[] }) {
+  const [scope, setScope] = useState<CurveScope>("all");
+  const [rangeId, setRangeId] = useState<CurveRange>("6m");
+  const [selectedMonth, setSelectedMonth] = useState("");
+  const scopedPoints = curve.filter((point) => scope === "all" || point.baskets[scope]);
+  const selectedRange = CURVE_RANGES.find((item) => item.id === rangeId) ?? CURVE_RANGES[0];
+  const values = selectedRange.months
+    ? scopedPoints.slice(-selectedRange.months)
+    : scopedPoints;
+  const seriesFor = (point: CurvePoint): CurveSeries => (
+    scope === "all" ? point : point.baskets[scope] as CurveSeries
+  );
+  const activePoint = values.find((point) => point.month === selectedMonth) ?? values.at(-1);
+  const activeSeries = activePoint ? seriesFor(activePoint) : null;
+  const width = 760;
+  const height = 260;
+  const padding = { left: 66, right: 24, top: 20, bottom: 38 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  if (!values.length) {
+    return (
+      <div className="growth-chart">
+        <div className="chart-controls"><CurveScopeTabs scope={scope} setScope={setScope} baskets={baskets} /></div>
+        <div className="chart-empty"><strong>从本月开始生长</strong><span>点击“更新估值”生成第一个月度数据点。</span></div>
+      </div>
+    );
+  }
+
+  const allNumbers = values.flatMap((point) => {
+    const series = seriesFor(point);
+    return [series.total, series.principal];
+  });
+  const rawMin = Math.min(...allNumbers);
+  const rawMax = Math.max(...allNumbers);
+  const naturalRange = Math.max(1, rawMax - rawMin);
+  const min = Math.max(0, rawMin - naturalRange * 0.18);
+  const max = rawMax + naturalRange * 0.18;
+  const valueRange = Math.max(1, max - min);
+  const xAt = (index: number) => padding.left + (
+    values.length === 1 ? chartWidth / 2 : index / (values.length - 1) * chartWidth
+  );
+  const yAt = (value: number) => padding.top + (max - value) / valueRange * chartHeight;
+  const linePath = (key: "total" | "principal") => values.map((point, index) => {
+    const prefix = index === 0 ? "M" : "L";
+    return `${prefix}${xAt(index).toFixed(2)},${yAt(seriesFor(point)[key]).toFixed(2)}`;
+  }).join(" ");
+  const profitAreas: string[] = [];
+  const lossAreas: string[] = [];
+
+  if (values.length === 1) {
+    const current = seriesFor(values[0]);
+    const x = xAt(0);
+    const polygon = `${x - 18},${yAt(current.total)} ${x + 18},${yAt(current.total)} ${x + 18},${yAt(current.principal)} ${x - 18},${yAt(current.principal)}`;
+    (current.profit >= 0 ? profitAreas : lossAreas).push(polygon);
+  } else {
+    for (let index = 0; index < values.length - 1; index += 1) {
+      const first = seriesFor(values[index]);
+      const second = seriesFor(values[index + 1]);
+      const firstDifference = first.total - first.principal;
+      const secondDifference = second.total - second.principal;
+      const firstX = xAt(index);
+      const secondX = xAt(index + 1);
+      const firstTotalY = yAt(first.total);
+      const secondTotalY = yAt(second.total);
+      const firstPrincipalY = yAt(first.principal);
+      const secondPrincipalY = yAt(second.principal);
+      if (firstDifference * secondDifference < 0) {
+        const ratio = Math.abs(firstDifference) / (Math.abs(firstDifference) + Math.abs(secondDifference));
+        const crossX = firstX + (secondX - firstX) * ratio;
+        const crossY = firstTotalY + (secondTotalY - firstTotalY) * ratio;
+        const firstPolygon = `${firstX},${firstTotalY} ${crossX},${crossY} ${firstX},${firstPrincipalY}`;
+        const secondPolygon = `${crossX},${crossY} ${secondX},${secondTotalY} ${secondX},${secondPrincipalY}`;
+        (firstDifference >= 0 ? profitAreas : lossAreas).push(firstPolygon);
+        (secondDifference >= 0 ? profitAreas : lossAreas).push(secondPolygon);
+      } else {
+        const polygon = `${firstX},${firstTotalY} ${secondX},${secondTotalY} ${secondX},${secondPrincipalY} ${firstX},${firstPrincipalY}`;
+        (firstDifference >= 0 && secondDifference >= 0 ? profitAreas : lossAreas).push(polygon);
+      }
+    }
+  }
+  const labelStep = Math.max(1, Math.ceil(values.length / 6));
+
   return (
     <div className="growth-chart">
-      <div className="chart-legend"><span><i className="total" />总资产</span><span><i className="principal" />累计本金</span></div>
-      <div className="chart-canvas">
-        <div className="chart-grid-lines"><i /><i /><i /><i /></div>
-        <div className="chart-shape principal" style={{ clipPath: polygon("principal") }} />
-        <div className="chart-shape total" style={{ clipPath: polygon("total") }} />
-        <div className="chart-end-value"><small>现在</small><strong>{money(values.at(-1)?.total ?? 0, true)}</strong></div>
+      <div className="chart-controls">
+        <CurveScopeTabs scope={scope} setScope={(next) => { setScope(next); setSelectedMonth(""); }} baskets={baskets} />
+        <div className="chart-range-tabs" aria-label="曲线时间范围">
+          {CURVE_RANGES.map((item) => <button key={item.id} className={rangeId === item.id ? "active" : ""} onClick={() => { setRangeId(item.id); setSelectedMonth(""); }}>{item.label}</button>)}
+        </div>
       </div>
-      <div className="chart-axis"><span>2月</span><span>4月</span><span>6月</span><span>现在</span></div>
+      <div className="chart-legend"><span><i className="total" />当前金额</span><span><i className="principal" />累计本金</span><span><i className="profit" />盈利</span><span><i className="loss" />亏损</span></div>
+      <div className="chart-layout">
+        <div className="chart-canvas">
+          <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${scope === "all" ? "全部资产" : baskets.find((basket) => basket.code === scope)?.name}月度生长曲线`}>
+            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+              const y = padding.top + ratio * chartHeight;
+              const label = max - ratio * valueRange;
+              return <g key={ratio}><line className="chart-grid-line" x1={padding.left} x2={width - padding.right} y1={y} y2={y} /><text className="chart-y-label" x={padding.left - 10} y={y + 4}>{money(label, true)}</text></g>;
+            })}
+            {profitAreas.map((points, index) => <polygon className="chart-profit-area" points={points} key={`profit-${index}`} />)}
+            {lossAreas.map((points, index) => <polygon className="chart-loss-area" points={points} key={`loss-${index}`} />)}
+            <path className="chart-line principal" d={linePath("principal")} />
+            <path className="chart-line total" d={linePath("total")} />
+            {values.map((point, index) => {
+              const series = seriesFor(point);
+              const active = point.month === activePoint?.month;
+              const showLabel = index % labelStep === 0 || index === values.length - 1;
+              return <g className="chart-point" role="button" tabIndex={0} aria-label={`${monthLabel(point.month, true)}，当前金额 ${money(series.total)}，累计本金 ${money(series.principal)}`} key={point.month} onMouseEnter={() => setSelectedMonth(point.month)} onFocus={() => setSelectedMonth(point.month)} onClick={() => setSelectedMonth(point.month)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setSelectedMonth(point.month); }}>
+                <circle className="chart-hit-target" cx={xAt(index)} cy={yAt(series.total)} r="14" />
+                <circle className={active ? "chart-dot active" : "chart-dot"} cx={xAt(index)} cy={yAt(series.total)} r={active ? 5 : 3.5} />
+                {showLabel && <text className="chart-x-label" x={xAt(index)} y={height - 10}>{monthLabel(point.month)}</text>}
+              </g>;
+            })}
+          </svg>
+        </div>
+        {activePoint && activeSeries && <div className="chart-detail" aria-live="polite">
+          <div><span>{monthLabel(activePoint.month, true)}</span><small>{activePoint.month === curve.at(-1)?.month ? "本月最新" : "月末快照"}</small></div>
+          <dl>
+            <div><dt>当前金额</dt><dd>{money(activeSeries.total, true)}</dd></div>
+            <div><dt>累计本金</dt><dd>{money(activeSeries.principal, true)}</dd></div>
+            <div className={activeSeries.profit >= 0 ? "positive" : "negative"}><dt>累计盈亏</dt><dd>{signedMoney(activeSeries.profit)}</dd></div>
+            <div><dt>盈亏率</dt><dd>{activeSeries.profitRatio > 0 ? "+" : ""}{activeSeries.profitRatio.toFixed(2)}%</dd></div>
+            <div><dt>当月净投入</dt><dd>{signedMoney(activeSeries.netContribution)}</dd></div>
+            <div><dt>较上月金额</dt><dd>{signedMoney(activeSeries.valueChange)}</dd></div>
+          </dl>
+        </div>}
+      </div>
     </div>
   );
+}
+
+function CurveScopeTabs({ scope, setScope, baskets }: { scope: CurveScope; setScope: (scope: CurveScope) => void; baskets: Basket[] }) {
+  return <div className="chart-scope-tabs" aria-label="曲线篮子范围">
+    <button className={scope === "all" ? "active" : ""} onClick={() => setScope("all")}>全部</button>
+    {baskets.map((basket) => <button key={basket.code} className={scope === basket.code ? "active" : ""} onClick={() => setScope(basket.code)}>{basket.name}</button>)}
+  </div>;
+}
+
+function BasketPerformanceCards({ baskets, curve }: { baskets: Basket[]; curve: CurvePoint[] }) {
+  return <section className="basket-performance-grid" aria-label="各篮子累计盈亏">
+    {baskets.map((basket) => {
+      const latest = [...curve].reverse().find((point) => point.baskets[basket.code])?.baskets[basket.code];
+      const stale = basket.staleAssetCount > 0;
+      return <article className={`basket-performance-card ${basket.code}`} key={basket.code}>
+        <header><div><span className="basket-color" style={{ background: basket.color }} /><strong>{basket.name}</strong></div><em className={basket.profitCny >= 0 ? "positive" : "negative"}>{basket.profitCny >= 0 ? "盈利" : "亏损"}</em></header>
+        <div className="basket-performance-main"><div><small>当前金额</small><b>{money(basket.valueCny, true)}</b></div><div><small>累计本金</small><b>{money(basket.principalCny, true)}</b></div></div>
+        <div className="basket-profit-row"><span>累计盈亏</span><strong className={basket.profitCny >= 0 ? "positive" : "negative"}>{signedMoney(basket.profitCny)} · {basket.profitRatio > 0 ? "+" : ""}{basket.profitRatio.toFixed(2)}%</strong></div>
+        <footer><span>本月净投入 {signedMoney(latest?.netContribution ?? 0)}</span><span className={stale ? "stale" : ""}>{stale ? `${basket.staleAssetCount} 项数据较旧` : basket.oldestPriceUpdatedAt ? `最旧报价 ${new Date(basket.oldestPriceUpdatedAt).toLocaleDateString("zh-CN")}` : "仅现金"}</span></footer>
+      </article>;
+    })}
+  </section>;
 }
 
 function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged: () => Promise<void>; onNotice: (message: string) => void }) {
   const [showForm, setShowForm] = useState(false);
   const [selected, setSelected] = useState<Asset | null>(null);
+  const [selling, setSelling] = useState<Asset | null>(null);
   const [message, setMessage] = useState("");
   const total = data.assets.reduce((sum, asset) => sum + asset.valueCny, 0);
 
@@ -889,7 +1077,7 @@ function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged:
 
   return (
     <div className="page-stack subpage">
-      <section className="subpage-title"><div><p className="section-kicker">资产台账</p><h1>每一片叶子，都有来处。</h1><p>共 {data.assets.length} 项资产，产品价值 {money(total, true)}。</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}>＋ 添加资产</button></section>
+      <section className="subpage-title"><div><p className="section-kicker">资产台账</p><h1>每一片叶子，都有来处。</h1><p>共 {data.assets.length} 项资产，产品价值 {money(total, true)}；卖出资金会回到所属篮子的待投资资产。</p></div><button className="primary-button" onClick={() => setShowForm(!showForm)}>＋ 添加资产</button></section>
       {message && <p className="inline-message">{message}</p>}
       {showForm && (
         <form className="panel asset-form" onSubmit={createAsset}>
@@ -915,7 +1103,7 @@ function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged:
             <span>{asset.units.toLocaleString("zh-CN", { maximumFractionDigits: 4 })} × {asset.unitPrice.toLocaleString("zh-CN") } {asset.currency}</span>
             <strong>{money(asset.valueCny, true)}</strong>
             <span className={asset.ageHours >= 48 ? "status-stale" : "status-fresh"}>{asset.freshnessLabel}</span>
-            <button className="row-action" onClick={() => setSelected(asset)}>编辑</button>
+            <span className="asset-row-actions"><button className="row-action" onClick={() => setSelling(asset)}>调仓</button><button className="row-action" onClick={() => setSelected(asset)}>编辑</button></span>
           </div>
         ))}
       </section>
@@ -936,10 +1124,51 @@ function AssetsView({ data, onChanged, onNotice }: { data: Dashboard; onChanged:
               <label className="wide-field">数据源属性（JSON）<textarea name="sourceAttributes" defaultValue={JSON.stringify(selected.sourceAttributes, null, 2)} placeholder={'{"fund_code":"000300"}'} /></label>
               <label className="wide-field">备注<textarea name="note" defaultValue={selected.note} placeholder="记录持有理由、计算口径等" /></label>
             </div>
-            <div className="form-actions"><button type="button" className="danger-button" onClick={deleteAsset}>删除资产</button><span /><button type="button" onClick={() => setSelected(null)}>取消</button><button className="primary-button" type="submit">保存全部修改</button></div>
+            <div className="form-actions"><button type="button" className="danger-button" onClick={deleteAsset}>仅删除记录</button><span /><button type="button" onClick={() => { setSelling(selected); setSelected(null); }}>卖出 / 调仓</button><button type="button" onClick={() => setSelected(null)}>取消</button><button className="primary-button" type="submit">保存全部修改</button></div>
           </form>
         </div>
       )}
+      {selling && <AssetSaleDialog asset={selling} onClose={() => setSelling(null)} onSaved={onChanged} onNotice={onNotice} />}
+    </div>
+  );
+}
+
+function AssetSaleDialog({ asset, onClose, onSaved, onNotice }: { asset: Asset; onClose: () => void; onSaved: () => Promise<void>; onNotice: (message: string) => void }) {
+  const [units, setUnits] = useState(String(asset.units));
+  const [unitPrice, setUnitPrice] = useState(String(asset.unitPrice));
+  const [fxRate, setFxRate] = useState(String(asset.fxRate));
+  const [note, setNote] = useState("");
+  const [message, setMessage] = useState("");
+  const soldUnits = Number(units);
+  const saleValue = soldUnits * Number(unitPrice) * Number(fxRate);
+  const isFullSale = Number.isFinite(soldUnits) && soldUnits === asset.units;
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!Number.isFinite(soldUnits) || soldUnits <= 0 || soldUnits > asset.units) { setMessage("卖出份额需大于 0，且不能超过当前持有份额。"); return; }
+    if (!Number.isFinite(Number(unitPrice)) || Number(unitPrice) <= 0 || !Number.isFinite(Number(fxRate)) || Number(fxRate) <= 0) { setMessage("请输入有效的成交单价与汇率。"); return; }
+    try {
+      const result = await api<{ proceedsCny: number; remainingUnits: number; assetLiquidated: boolean }>(`/assets/${asset.id}/sell`, {
+        method: "POST",
+        body: JSON.stringify({ units, unit_price: unitPrice, fx_rate: fxRate, note: note.trim() || "卖出资产，转入待投资资产" }),
+      });
+      await onSaved();
+      onNotice(`${result.assetLiquidated ? "已清仓" : "已调仓"} ${asset.name}，${money(result.proceedsCny, true)} 已流入${asset.basketName}待投资资产`);
+      onClose();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "卖出记录失败"); }
+  };
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="asset-sale-title">
+      <button className="modal-dismiss" type="button" aria-label="关闭调仓窗口" onClick={onClose} />
+      <form className="modal-card asset-sale-modal" onSubmit={submit}>
+        <div className="modal-heading"><div><p className="section-kicker">{asset.basketName}</p><h2 id="asset-sale-title">卖出 / 调仓</h2></div><span>成交资金会直接流入本篮子的待投资资产</span></div>
+        <p className="asset-sale-summary"><strong>{asset.name}</strong><span>可卖 {asset.units.toLocaleString("zh-CN", { maximumFractionDigits: 6 })} 份 · 当前价值 {money(asset.valueCny, true)}</span></p>
+        <div className="asset-sale-fields"><label>卖出份额<input required type="number" min="0.00000001" max={asset.units} step="any" value={units} onChange={(event) => setUnits(event.target.value)} /></label><label>成交单价（{asset.currency}）<input required type="number" min="0.00000001" step="any" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} /></label><label>人民币汇率<input required type="number" min="0.000001" step="any" value={fxRate} onChange={(event) => setFxRate(event.target.value)} /></label></div>
+        <button className="text-button" type="button" onClick={() => setUnits(String(asset.units))}>全部清仓</button>
+        <p className="asset-sale-proceeds">预计流入待投资资产 <strong>{Number.isFinite(saleValue) ? money(saleValue, true) : "—"}</strong>{isFullSale ? " · 该资产将从当前持仓移除" : ""}</p>
+        <label>备注（可选）<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="例如：降低高风险仓位，等待重新配置" /></label>
+        {message && <p className="cash-balance-message">{message}</p>}
+        <div className="form-actions"><button type="button" onClick={onClose}>取消</button><button className="primary-button" type="submit">确认转入待投资资产</button></div>
+      </form>
     </div>
   );
 }
@@ -953,7 +1182,7 @@ function freshDataSource(): DataSourceView {
     functionName: "fetch",
     inputMapping: { fund_code: "source_attributes.fund_code", fallback_price: "unit_price" },
     outputMapping: { unit_price: "price" },
-    assetIds: [], packages: ["httpx"], scheduleMinutes: 1440, enabled: false,
+    assetIds: [], packages: [], scheduleMinutes: 1440, enabled: false,
     lastRunAt: null, lastStatus: "", gitRevision: "",
   };
 }
@@ -1371,7 +1600,7 @@ function SettingsView({ data, onChanged, onNotice }: { data: Dashboard; onChange
               <label>成长篮子（%）<input type="number" min="0" max="100" step="0.1" value={config.growthRatio * 100} onChange={(event) => setConfig((current) => ({ ...current, growthRatio: Number(event.target.value) / 100 }))} /></label>
               <label>高风险篮子（%）<input type="number" min="0" max="100" step="0.1" value={config.riskRatio * 100} onChange={(event) => setConfig((current) => ({ ...current, riskRatio: Number(event.target.value) / 100 }))} /></label>
             </div>
-            <p className="setting-note">待购买现金不参与篮子比例计算；它会保留在对应篮子中，直到记录实际买入。</p>
+            <p className="setting-note">待投资资产不参与篮子比例计算；它会常驻在对应篮子中，直到记录实际买入或支出。</p>
             <div className="settings-actions"><button className="primary-button" type="button" onClick={saveAllocation}>保存配置策略</button></div>
           </div>
         </div>

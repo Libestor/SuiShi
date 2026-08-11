@@ -18,6 +18,7 @@ from app.main import (
     SandboxLimits,
     _sandbox_command,
     _sandbox_environment,
+    python_for_packages,
 )
 
 
@@ -54,6 +55,27 @@ def test_sandbox_environment_does_not_expose_runner_secret() -> None:
     environment = _sandbox_environment()
     assert "RUNNER_SHARED_SECRET" not in environment
     assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
+def test_package_environment_clears_the_precreated_staging_directory(
+    monkeypatch, tmp_path
+) -> None:
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(runner_main, "cache_root", tmp_path)
+    monkeypatch.setattr(runner_main, "_chown", lambda *args: None)
+    monkeypatch.setattr(runner_main, "_seal_environment", lambda *args: None)
+    monkeypatch.setattr(runner_main, "_run_sandboxed", fake_run)
+
+    python_path = python_for_packages(["httpx"])
+
+    assert commands[0][:3] == ["uv", "venv", "--clear"]
+    assert commands[1][:4] == ["uv", "pip", "install", "--python"]
+    assert python_path.name == "python"
 
 
 def test_timeout_kills_process_group_and_escaped_user_processes(monkeypatch) -> None:
