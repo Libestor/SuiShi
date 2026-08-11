@@ -166,10 +166,9 @@ def test_scheduled_investment_api_accepts_valid_time_and_mapped_quote_source(
         json={
             "name": "每周定投", "asset_id": asset.id, "data_source_id": source.id,
             "amount_cny": "100", "frequency": "weekly", "weekday": 0,
-            "time_of_day": "09:30",
         },
     )
 
     assert response.status_code == 201
     assert response.json()["dataSourceId"] == source.id
-    assert response.json()["timeOfDay"] == "09:30"
+    assert response.json()["timeOfDay"] == "16:00"

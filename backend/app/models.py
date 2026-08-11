@@ -165,7 +165,7 @@ class ScheduledInvestment(RecordMixin, Base):
     frequency: Mapped[str] = mapped_column(String(16))  # weekly | biweekly | monthly
     weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)
     day_of_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    time_of_day: Mapped[str] = mapped_column(String(5), default="09:30")
+    time_of_day: Mapped[str] = mapped_column(String(5), default="16:00")
     anchor_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     timezone: Mapped[str] = mapped_column(String(48), default="Asia/Shanghai")
     retry_attempts: Mapped[int] = mapped_column(Integer, default=3)

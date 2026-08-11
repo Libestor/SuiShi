@@ -1285,7 +1285,7 @@ function ScheduledInvestmentsView({ assets, onChanged, onNotice }: { assets: Ass
   const [sources, setSources] = useState<DataSourceView[]>([]);
   const [message, setMessage] = useState("");
   const [editingId, setEditingId] = useState("");
-  const [draft, setDraft] = useState({ name: "", assetId: "", dataSourceId: "", amountCny: "", frequency: "weekly" as ScheduledInvestmentView["frequency"], weekday: "0", dayOfMonth: "10", timeOfDay: "09:30", anchorDate: "", retryAttempts: "3" });
+  const [draft, setDraft] = useState({ name: "", assetId: "", dataSourceId: "", amountCny: "", frequency: "weekly" as ScheduledInvestmentView["frequency"], weekday: "0", dayOfMonth: "10", timeOfDay: "16:00", anchorDate: "", retryAttempts: "3" });
   const load = async () => {
     const [nextPlans, nextSources] = await Promise.all([api<ScheduledInvestmentView[]>("/scheduled-investments"), api<DataSourceView[]>("/data-sources")]);
     setPlans(nextPlans); setSources(nextSources);
@@ -1297,7 +1297,7 @@ function ScheduledInvestmentsView({ assets, onChanged, onNotice }: { assets: Ass
       .catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "定投设置读取失败"); });
     return () => { active = false; };
   }, []);
-  const reset = () => { setEditingId(""); setDraft({ name: "", assetId: "", dataSourceId: "", amountCny: "", frequency: "weekly", weekday: "0", dayOfMonth: "10", timeOfDay: "09:30", anchorDate: "", retryAttempts: "3" }); };
+  const reset = () => { setEditingId(""); setDraft({ name: "", assetId: "", dataSourceId: "", amountCny: "", frequency: "weekly", weekday: "0", dayOfMonth: "10", timeOfDay: "16:00", anchorDate: "", retryAttempts: "3" }); };
   const edit = (plan: ScheduledInvestmentView) => {
     setEditingId(plan.id);
     setDraft({ name: plan.name, assetId: plan.assetId, dataSourceId: plan.dataSourceId, amountCny: String(plan.amountCny), frequency: plan.frequency, weekday: String(plan.weekday ?? 0), dayOfMonth: String(plan.dayOfMonth ?? 10), timeOfDay: plan.timeOfDay, anchorDate: plan.anchorDate?.slice(0, 10) ?? "", retryAttempts: String(plan.retryAttempts) });
