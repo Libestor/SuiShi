@@ -197,9 +197,10 @@ def dashboard_payload(db: Session) -> dict[str, object]:
             }
         )
 
-    # 待购买现金属于篮子总资产，但不参与成长/高风险的风险比例。
-    growth = basket_asset_values.get("growth", ZERO)
-    risk = basket_asset_values.get("risk", ZERO)
+    # 配置罗盘只比较成长与高风险两个篮子；两者的待投资资产同样属于可配置资金，
+    # 因此纳入比例，应急储备金始终排除。
+    growth = basket_values.get("growth", ZERO)
+    risk = basket_values.get("risk", ZERO)
     investment_total = growth + risk
     allocation = {
         "mode": platform_settings.allocation_mode,

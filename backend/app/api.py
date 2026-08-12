@@ -721,15 +721,14 @@ def preview_allocation(
 ) -> dict[str, object]:
     totals = calculate_totals(db)
     basket_values = totals["basket_values"]
-    basket_asset_values = totals["basket_asset_values"]
     baskets = {basket.code: basket for basket in totals["baskets"]}
     emergency = baskets["emergency"]
     return calculate_allocation(
         contribution=payload.contribution_cny,
         emergency_current=basket_values.get("emergency", Decimal("0")),
         emergency_target=emergency.emergency_target_cny or Decimal("0"),
-        growth_current=basket_asset_values.get("growth", Decimal("0")),
-        risk_current=basket_asset_values.get("risk", Decimal("0")),
+        growth_current=basket_values.get("growth", Decimal("0")),
+        risk_current=basket_values.get("risk", Decimal("0")),
         growth_ratio=payload.growth_ratio,
         risk_ratio=payload.risk_ratio,
         mode=payload.mode,

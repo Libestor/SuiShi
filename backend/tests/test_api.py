@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import func, select
 
 from app.models import (
@@ -190,16 +191,26 @@ def test_allocation_preview_uses_current_basket_values(client, auth_headers) -> 
     assert response.status_code == 200
     payload = response.json()
     assert payload["emergency_cny"] == "10000.00"
-    assert payload["growth_cny"] == "4000.00"
-    assert payload["risk_cny"] == "1000.00"
+    # 高风险篮子的待投资资产也计入当前配置，因此剩余资金优先补成长。
+    assert payload["growth_cny"] == "5000.00"
+    assert payload["risk_cny"] == "0.00"
 
 
-def test_pending_cash_does_not_change_invested_risk_ratio(client, auth_headers) -> None:
+def test_pending_cash_is_included_in_growth_and_risk_compass(client, db, auth_headers) -> None:
+    growth = db.scalar(select(Basket).where(Basket.code == "growth"))
+    risk = db.scalar(select(Basket).where(Basket.code == "risk"))
+    assert growth is not None
+    assert risk is not None
+    growth.cash_balance_cny = Decimal("20000")
+    risk.cash_balance_cny = Decimal("10000")
+    db.commit()
+
     response = client.get("/api/v1/dashboard", headers=auth_headers)
     assert response.status_code == 200
     allocation = response.json()["allocation"]
-    assert allocation["growthRatio"] == 80.0
-    assert allocation["riskRatio"] == 20.0
+    # 应急储备金的 50,000 不参与；成长和高风险均包含各自待投资资产。
+    assert allocation["growthRatio"] == pytest.approx(100000 / 130000 * 100)
+    assert allocation["riskRatio"] == pytest.approx(30000 / 130000 * 100)
 
 
 def test_dashboard_reports_principal_and_profit_for_each_basket(
